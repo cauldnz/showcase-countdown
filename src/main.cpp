@@ -541,7 +541,13 @@ void renderCelebration(uint32_t elapsedMs, bool flashing) {
 void performCelebration() {
     const fanfare::Voice& voice = fanfare::VOICES[voiceIndex];
     const float transpose = fanfare::TRANSPOSE[voiceIndex];
+
+    // Captured now, printed at the end: Serial blocks for milliseconds at
+    // 115200 and would delay the very attack this is trying to measure.
+    struct timeval attack;
+    gettimeofday(&attack, nullptr);
     const uint32_t start = millis();
+    uint32_t scheduled = 0;
 
     for (size_t i = 0; i < voice.length; ++i) {
         const fanfare::Note& note = voice.notes[i];
@@ -551,7 +557,11 @@ void performCelebration() {
             M5.Speaker.tone(note.hz * transpose, note.ms);
         }
 
-        const uint32_t noteEnd = millis() + note.ms;
+        // Anchored to the absolute schedule, not to "now": an overrunning note
+        // is absorbed by the next one rather than accumulating. Relative timing
+        // drifts voices apart in proportion to their differing note counts.
+        scheduled += note.ms;
+        const uint32_t noteEnd = start + scheduled;
         while (static_cast<int32_t>(noteEnd - millis()) > 0) {
             renderCelebration(millis() - start, true);
             M5.delay(1);
@@ -559,6 +569,27 @@ void performCelebration() {
     }
 
     M5.Speaker.stop();
+    const uint32_t measured = millis() - start;
+
+    const int64_t attackUs =
+        static_cast<int64_t>(attack.tv_sec) * 1000000LL + static_cast<int64_t>(attack.tv_usec);
+    const int64_t skewUs = attackUs - static_cast<int64_t>(EVENT_EPOCH_UTC) * 1000000LL;
+
+    Serial.println("fire");
+    Serial.printf("  voice   : %u (%s)\n", static_cast<unsigned>(voiceIndex), voice.name);
+    Serial.printf("  target  : %lu.000000\n", static_cast<unsigned long>(EVENT_EPOCH_UTC));
+    Serial.printf("  attack  : %lu.%06lu\n", static_cast<unsigned long>(attack.tv_sec),
+                  static_cast<unsigned long>(attack.tv_usec));
+    // Skew is the number to compare between units. Printed in microseconds when
+    // it is small enough to matter, seconds when the target had already passed.
+    if (skewUs > -1000000LL && skewUs < 1000000LL) {
+        Serial.printf("  skew    : %+ld us\n", static_cast<long>(skewUs));
+    } else {
+        Serial.printf("  skew    : %+ld s (late start, not a sync measurement)\n",
+                      static_cast<long>(skewUs / 1000000LL));
+    }
+    Serial.printf("  duration: %lu ms (expect %u)\n", static_cast<unsigned long>(measured),
+                  fanfare::DURATION_MS);
 }
 
 void auditionAllVoices() {
