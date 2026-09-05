@@ -6,6 +6,8 @@
 #include <esp_sntp.h>
 #elif __has_include(<sntp.h>)
 #include <sntp.h>
+#else
+#error "SNTP support is required"
 #endif
 
 #include <string.h>
@@ -27,8 +29,7 @@ constexpr uint32_t RESYNC_INTERVAL_MS = 6UL * 60 * 60 * 1000;  // requirement 3
 constexpr int64_t PRE_EVENT_SYNC_LEAD_S = 5 * 60;
 
 // Any real sync lands far past this; an unset clock starts at 0. Comparing the
-// wall clock is more robust than sntp_get_sync_status(), whose return values
-// differ across core versions and sync modes.
+// wall clock is more robust than SNTP status values across core versions.
 constexpr time_t SANE_EPOCH = 1750000000;  // 2025-06-15
 
 const char* const TITLES[] = EVENT_TITLES;
@@ -525,7 +526,7 @@ void drawCelebration(LovyanGFX* g, uint32_t elapsedMs, bool flashing) {
     g->setFont(layout.labelFont);
     g->setTextDatum(middle_center);
     g->setTextColor(accent);
-    g->drawString("IT'S HERE", layout.w / 2, layout.h / 2 + 20);
+    g->drawString("IT'S TIME", layout.w / 2, layout.h / 2 + 20);
 }
 
 void renderCelebration(uint32_t elapsedMs, bool flashing) {
