@@ -240,6 +240,8 @@ void initializeLights() {
         return;
     }
 
+    M5.Power.setExtOutput(true);
+    Serial.printf("  grove 5v: %s\n", M5.Power.getExtOutput() ? "on" : "FAILED");
     lights.begin();
     lights.clear();
     lights.show();
@@ -248,12 +250,22 @@ void initializeLights() {
     updateLightSchedule(time(nullptr));
 }
 
-void toggleLights() {
+void toggleLights(const char* source) {
     if (!LED_ENABLED) {
         Serial.println("  leds    : toggle ignored (disabled)");
         return;
     }
-    setLights(!lightsOn, "button");
+    setLights(!lightsOn, source);
+}
+
+void printSerialHelp() {
+    Serial.println("serial commands:");
+    Serial.println("  ?  show this help menu");
+    Serial.println("  a  audition all fanfare voices");
+    Serial.println("  s  resync the clock from NTP");
+    Serial.println("  t  run the speaker tone sweep");
+    Serial.println("  m  run the speaker drive test");
+    Serial.println("  l  toggle the Grove lights");
 }
 
 // ---------------------------------------------------------------------------
@@ -825,6 +837,10 @@ void setup() {
     M5.delay(200);
 
     auto cfg = M5.config();
+    // Speaker hats are not detectable at runtime, so the fitted one is named in .env.
+    cfg.internal_spk = SPEAKER_INTERNAL;
+    cfg.external_speaker.hat_spk = SPEAKER_HAT_SPK;
+    cfg.external_speaker.hat_spk2 = SPEAKER_HAT_SPK2;
     M5.begin(cfg);
 
     M5.Display.setRotation(1);
@@ -842,7 +858,8 @@ void setup() {
     Serial.printf("\nshowcase-countdown\n");
     Serial.printf("  board   : %d\n", static_cast<int>(M5.getBoard()));
     Serial.printf("  panel   : %dx%d\n", layout.w, layout.h);
-    Serial.printf("  speaker : %s\n", M5.Speaker.isEnabled() ? "present" : "ABSENT");
+    Serial.printf("  speaker : %s (%s)\n", M5.Speaker.isEnabled() ? "present" : "ABSENT",
+                  SPEAKER_NAME);
     Serial.printf("  event   : %s\n", EVENT_NAME);
     Serial.printf("  titles  : %u\n", static_cast<unsigned>(TITLE_COUNT));
     Serial.printf("  target  : %lld\n", static_cast<long long>(EVENT_EPOCH_UTC));
@@ -852,7 +869,7 @@ void setup() {
                   mac[4], mac[5]);
     Serial.printf("  roll    : %u\n", voice::rollFor(efuse));
     Serial.printf("  voice   : %u (%s)\n", voiceIndex, fanfare::VOICES[voiceIndex].name);
-    Serial.println("  keys    : 'a' audition, 's' resync, 't' tone sweep, 'm' drive test");
+    printSerialHelp();
 
     if (M5.Speaker.isEnabled()) {
         M5.Speaker.setVolume(255);
@@ -891,11 +908,15 @@ void loop() {
             sweepTones();
         } else if (command == 'm' || command == 'M') {
             driveTest();
+        } else if (command == 'l' || command == 'L') {
+            toggleLights("serial");
+        } else if (command == '?') {
+            printSerialHelp();
         }
     }
 
     if (M5.BtnA.wasDoubleClicked()) {
-        toggleLights();
+        toggleLights("button");
     } else if (M5.BtnA.wasSingleClicked()) {
         renderMessage(EVENT_NAME, "syncing...");
         syncFromNtp();

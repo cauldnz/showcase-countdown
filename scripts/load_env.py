@@ -28,6 +28,7 @@ DEFAULTS = {
     "NTP_SERVER_2": '"1.pool.ntp.org"',
     "NTP_SERVER_3": '"2.pool.ntp.org"',
     "BRIGHTNESS": "80",
+    "SPEAKER": '"INTERNAL"',
     "LED_TYPE": '"NEOPIXEL"',
     "LED_COUNT": "1",
     "LED_PIN": "32",
@@ -49,19 +50,30 @@ _UTC_OFFSET = re.compile(r"^(?:UTC)?([+-])(\d{1,2})(?::([0-5]\d))?$", re.IGNOREC
 _CLOCK_TIME = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
 
 _LED_TYPES = {
-    "NONE": (0, "NEO_GRB"),
-    "NEOPIXEL": (1, "NEO_GRB"),
-    "NEOPIXEL_RGB": (1, "NEO_RGB"),
-    "NEOPIXEL_RBG": (1, "NEO_RBG"),
-    "NEOPIXEL_GRB": (1, "NEO_GRB"),
-    "NEOPIXEL_GBR": (1, "NEO_GBR"),
-    "NEOPIXEL_BRG": (1, "NEO_BRG"),
-    "NEOPIXEL_BGR": (1, "NEO_BGR"),
-    "WS2812": (1, "NEO_GRB"),
-    "WS2812B": (1, "NEO_GRB"),
+    "NONE": (0, "NEO_GRB", "NEO_KHZ800"),
+    "NEOPIXEL": (1, "NEO_GRB", "NEO_KHZ800"),
+    "NEOPIXEL_V1": (1, "NEO_RGB", "NEO_KHZ400"),
+    "NEOPIXEL_RGB": (1, "NEO_RGB", "NEO_KHZ800"),
+    "NEOPIXEL_RBG": (1, "NEO_RBG", "NEO_KHZ800"),
+    "NEOPIXEL_GRB": (1, "NEO_GRB", "NEO_KHZ800"),
+    "NEOPIXEL_GBR": (1, "NEO_GBR", "NEO_KHZ800"),
+    "NEOPIXEL_BRG": (1, "NEO_BRG", "NEO_KHZ800"),
+    "NEOPIXEL_BGR": (1, "NEO_BGR", "NEO_KHZ800"),
+    "WS2812": (1, "NEO_GRB", "NEO_KHZ800"),
+    "WS2812B": (1, "NEO_GRB", "NEO_KHZ800"),
+}
+
+# M5Unified cannot probe for a speaker hat, so the fitted hardware has to be
+# named here: (internal_spk, hat_spk, hat_spk2).
+_SPEAKERS = {
+    "NONE": (0, 0, 0),
+    "INTERNAL": (1, 0, 0),
+    "HAT_SPK": (0, 1, 0),
+    "HAT_SPK2": (0, 0, 1),
 }
 
 _DERIVED_SETTINGS = {
+    "SPEAKER",
     "LED_TYPE",
     "LED_COUNT",
     "LED_PIN",
@@ -193,10 +205,14 @@ def literal(value, quoted):
 
 
 def render(entries, epoch, parsed):
+    speaker = setting_value(entries, "SPEAKER").upper()
+    if speaker not in _SPEAKERS:
+        fail("SPEAKER=%r must be one of: %s" % (speaker, ", ".join(sorted(_SPEAKERS))))
+    internal_spk, hat_spk, hat_spk2 = _SPEAKERS[speaker]
     led_type = setting_value(entries, "LED_TYPE").upper()
     if led_type not in _LED_TYPES:
         fail("LED_TYPE=%r must be one of: %s" % (led_type, ", ".join(sorted(_LED_TYPES))))
-    led_enabled, pixel_order = _LED_TYPES[led_type]
+    led_enabled, pixel_order, pixel_speed = _LED_TYPES[led_type]
     led_count = integer_setting(entries, "LED_COUNT", (1, 2))
     led_pin = integer_setting(entries, "LED_PIN", (32, 33))
     led_brightness = integer_range_setting(entries, "LED_BRIGHTNESS", 1, 255)
@@ -223,12 +239,17 @@ def render(entries, epoch, parsed):
     lines.append("#define EVENT_TITLE_COUNT %d" % len(titles))
     lines.append("#define EVENT_TITLES {%s}" % ", ".join(c_string(t) for t in titles))
     lines.append("")
+    lines.append("#define SPEAKER_NAME %s" % c_string(speaker))
+    lines.append("#define SPEAKER_INTERNAL %d" % internal_spk)
+    lines.append("#define SPEAKER_HAT_SPK %d" % hat_spk)
+    lines.append("#define SPEAKER_HAT_SPK2 %d" % hat_spk2)
+    lines.append("")
     lines.append("#define LED_ENABLED %d" % led_enabled)
     lines.append("#define LED_TYPE_NAME %s" % c_string(led_type))
     lines.append("#define LED_COUNT %d" % led_count)
     lines.append("#define LED_PIN %d" % led_pin)
     lines.append("#define LED_BRIGHTNESS %d" % led_brightness)
-    lines.append("#define LED_PIXEL_TYPE (%s + NEO_KHZ800)" % pixel_order)
+    lines.append("#define LED_PIXEL_TYPE (%s + %s)" % (pixel_order, pixel_speed))
     lines.append("#define LOCAL_UTC_OFFSET_SECONDS %d" % utc_offset_seconds(entries))
     lines.append("#define LED_ON_MINUTE_OF_DAY %d" % led_on_minute)
     lines.append("#define LED_OFF_MINUTE_OF_DAY %d" % led_off_minute)
