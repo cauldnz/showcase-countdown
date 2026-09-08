@@ -1,0 +1,12 @@
+{
+  "name": "showcase-countdown",
+  "version": "__VERSION__",
+  "new_install_prompt_erase": true,
+  "builds": [
+    {
+      "chipFamily": "ESP32",
+      "improv": true,
+      "parts": [{ "path": "merged-firmware.bin", "offset": 0 }]
+    }
+  ]
+}

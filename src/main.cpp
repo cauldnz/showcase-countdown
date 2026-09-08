@@ -1,4 +1,5 @@
 #include <Adafruit_NeoPixel.h>
+#include <ImprovWiFiLibrary.h>
 #include <M5Unified.h>
 #include <WiFi.h>
 
@@ -16,10 +17,7 @@
 #include "fanfare.h"
 #include "light_schedule.h"
 #include "voice_assign.h"
-
-#ifndef WIFI_SSID
-#error "WIFI_SSID missing - copy .env.template to .env"
-#endif
+#include "wifi_store.h"
 
 namespace {
 
@@ -266,6 +264,27 @@ void printSerialHelp() {
     Serial.println("  t  run the speaker tone sweep");
     Serial.println("  m  run the speaker drive test");
     Serial.println("  l  toggle the Grove lights");
+    Serial.println("  w  forget the stored Wi-Fi credentials");
+}
+
+// ---------------------------------------------------------------------------
+// Improv Wi-Fi provisioning
+//
+// Lets the browser installer hand over credentials over the same USB serial
+// link, so no network details are compiled into a published image.
+// ---------------------------------------------------------------------------
+
+ImprovWiFi improv(&Serial);
+
+// handleSerial() consumes a byte per call regardless of content, so it would
+// otherwise swallow the single-character commands. Packets arrive as one burst,
+// so the header byte opens a short window during which bytes belong to Improv.
+constexpr uint32_t IMPROV_BURST_MS = 250;
+uint32_t improvBurstUntil = 0;
+
+void onImprovConnected(const char* ssid, const char* password) {
+    wifi_store::save(ssid, password);
+    Serial.printf("  improv  : provisioned for %s\n", ssid);
 }
 
 // ---------------------------------------------------------------------------
@@ -742,8 +761,14 @@ void onNtpSync(struct timeval*) {
 }
 
 bool syncFromNtp() {
+    const String ssid = wifi_store::ssid();
+    if (ssid.length() == 0) {
+        Serial.println("  wifi    : NOT PROVISIONED (use the web installer to set Wi-Fi)");
+        return false;
+    }
+
     WiFi.mode(WIFI_STA);
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    WiFi.begin(ssid.c_str(), wifi_store::password().c_str());
 
     const uint32_t deadline = millis() + WIFI_TIMEOUT_MS;
     while (WiFi.status() != WL_CONNECTED && millis() < deadline) {
@@ -843,6 +868,8 @@ void setup() {
     cfg.external_speaker.hat_spk2 = SPEAKER_HAT_SPK2;
     M5.begin(cfg);
 
+    wifi_store::begin();
+
     M5.Display.setRotation(1);
     M5.Display.setBrightness(BRIGHTNESS);
     computeLayout();
@@ -869,7 +896,12 @@ void setup() {
                   mac[4], mac[5]);
     Serial.printf("  roll    : %u\n", voice::rollFor(efuse));
     Serial.printf("  voice   : %u (%s)\n", voiceIndex, fanfare::VOICES[voiceIndex].name);
+    Serial.printf("  wifi    : %s\n", wifi_store::configured() ? "provisioned" : "NOT PROVISIONED");
     printSerialHelp();
+
+    improv.setDeviceInfo(ImprovTypes::ChipFamily::CF_ESP32, FIRMWARE_NAME, FIRMWARE_VERSION,
+                         FIRMWARE_NAME);
+    improv.onImprovConnected(onImprovConnected);
 
     if (M5.Speaker.isEnabled()) {
         M5.Speaker.setVolume(255);
@@ -899,6 +931,11 @@ void loop() {
     // Serial trigger as well as the button, so a mounted unit can be auditioned
     // without being taken down.
     while (Serial.available()) {
+        if (millis() < improvBurstUntil || Serial.peek() == 'I') {
+            improv.handleSerial();
+            improvBurstUntil = millis() + IMPROV_BURST_MS;
+            continue;
+        }
         const int command = Serial.read();
         if (command == 'a' || command == 'A') {
             auditionAllVoices();
@@ -910,6 +947,9 @@ void loop() {
             driveTest();
         } else if (command == 'l' || command == 'L') {
             toggleLights("serial");
+        } else if (command == 'w' || command == 'W') {
+            wifi_store::clear();
+            Serial.println("  wifi    : stored credentials cleared");
         } else if (command == '?') {
             printSerialHelp();
         }

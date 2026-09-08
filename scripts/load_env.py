@@ -21,14 +21,21 @@ ENV_PATH = os.path.join(env.subst("$PROJECT_DIR"), ".env")  # noqa: F821
 GENERATED_DIR = os.path.join(env.subst("$BUILD_DIR"), "generated")  # noqa: F821
 HEADER_PATH = os.path.join(GENERATED_DIR, "env_config.h")
 
-REQUIRED = ("WIFI_SSID", "WIFI_PASSWORD", "EVENT_NAME", "EVENT_DATETIME")
+REQUIRED = ("EVENT_NAME", "EVENT_DATETIME")
 
 DEFAULTS = {
+    # Empty means "provision over Improv at runtime". Publishable images must
+    # leave these unset so no network credentials end up in the binary.
+    "WIFI_SSID": '""',
+    "WIFI_PASSWORD": '""',
+    "FIRMWARE_NAME": '"showcase-countdown"',
+    "FIRMWARE_VERSION": '"dev"',
     "NTP_SERVER_1": '"0.pool.ntp.org"',
     "NTP_SERVER_2": '"1.pool.ntp.org"',
     "NTP_SERVER_3": '"2.pool.ntp.org"',
     "BRIGHTNESS": "80",
     "SPEAKER": '"INTERNAL"',
+    "LED_ENABLED": '"false"',
     "LED_TYPE": '"NEOPIXEL"',
     "LED_COUNT": "1",
     "LED_PIN": "32",
@@ -72,8 +79,20 @@ _SPEAKERS = {
     "HAT_SPK2": (0, 0, 1),
 }
 
+_BOOLEANS = {
+    "1": 1,
+    "true": 1,
+    "yes": 1,
+    "on": 1,
+    "0": 0,
+    "false": 0,
+    "no": 0,
+    "off": 0,
+}
+
 _DERIVED_SETTINGS = {
     "SPEAKER",
+    "LED_ENABLED",
     "LED_TYPE",
     "LED_COUNT",
     "LED_PIN",
@@ -121,6 +140,14 @@ def integer_range_setting(entries, key, minimum, maximum):
         fail("%s=%r must be an integer" % (key, value))
     if parsed < minimum or parsed > maximum:
         fail("%s=%r must be between %d and %d" % (key, value, minimum, maximum))
+    return parsed
+
+
+def boolean_setting(entries, key):
+    value = setting_value(entries, key)
+    parsed = _BOOLEANS.get(value.strip().lower())
+    if parsed is None:
+        fail("%s=%r must be true or false" % (key, value))
     return parsed
 
 
@@ -212,7 +239,8 @@ def render(entries, epoch, parsed):
     led_type = setting_value(entries, "LED_TYPE").upper()
     if led_type not in _LED_TYPES:
         fail("LED_TYPE=%r must be one of: %s" % (led_type, ", ".join(sorted(_LED_TYPES))))
-    led_enabled, pixel_order, pixel_speed = _LED_TYPES[led_type]
+    type_enabled, pixel_order, pixel_speed = _LED_TYPES[led_type]
+    led_enabled = 1 if type_enabled and boolean_setting(entries, "LED_ENABLED") else 0
     led_count = integer_setting(entries, "LED_COUNT", (1, 2))
     led_pin = integer_setting(entries, "LED_PIN", (32, 33))
     led_brightness = integer_range_setting(entries, "LED_BRIGHTNESS", 1, 255)

@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Install showcase-countdown</title>
+  <meta name="description" content="Flash the showcase-countdown firmware to an M5StickC PLUS SE from your browser.">
+  <script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #12141a;
+      --panel: #1c1f27;
+      --line: #2e323d;
+      --text: #e8eaf0;
+      --muted: #a2a8b8;
+      --accent: #00a4ef;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      padding: 2.5rem 1.25rem 4rem;
+      background: var(--bg);
+      color: var(--text);
+      font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif;
+      display: flex;
+      justify-content: center;
+    }
+
+    main {
+      width: 100%;
+      max-width: 44rem;
+    }
+
+    h1 {
+      margin: 0 0 .25rem;
+      font-size: 2rem;
+      letter-spacing: -.02em;
+    }
+
+    h2 {
+      margin: 2.5rem 0 .75rem;
+      font-size: 1.15rem;
+    }
+
+    .lede {
+      color: var(--muted);
+      margin: 0 0 2rem;
+    }
+
+    .install {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 1.75rem;
+      text-align: center;
+    }
+
+    esp-web-install-button {
+      --esp-tools-button-color: var(--accent);
+      --esp-tools-button-text-color: #05070b;
+      --esp-tools-button-border-radius: 8px;
+    }
+
+    .fallback {
+      color: var(--muted);
+      font-size: .95rem;
+    }
+
+    ol,
+    ul {
+      padding-left: 1.25rem;
+    }
+
+    li {
+      margin: .4rem 0;
+    }
+
+    code {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      padding: .1rem .4rem;
+      font-size: .9em;
+    }
+
+    .note {
+      border-left: 3px solid var(--accent);
+      background: var(--panel);
+      padding: .85rem 1.1rem;
+      border-radius: 0 8px 8px 0;
+      color: var(--muted);
+    }
+
+    footer {
+      margin-top: 3rem;
+      padding-top: 1.25rem;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: .9rem;
+    }
+
+    a {
+      color: var(--accent);
+    }
+  </style>
+</head>
+
+<body>
+  <main>
+    <h1>showcase-countdown</h1>
+    <p class="lede">An NTP-synchronised event countdown for the M5StickC PLUS SE. Plug your Stick in over USB and
+      install it directly from this page.</p>
+
+    <div class="install">
+      <esp-web-install-button manifest="manifest.json">
+        <button slot="activate">Connect and install</button>
+        <span slot="unsupported" class="fallback">
+          This browser cannot talk to serial devices. Open this page in Chrome, Edge, or Opera on a desktop computer.
+        </span>
+        <span slot="not-allowed" class="fallback">
+          Installing requires a secure (https) connection.
+        </span>
+      </esp-web-install-button>
+    </div>
+
+    <h2>Before you start</h2>
+    <ul>
+      <li>Use Chrome, Edge, or Opera on a desktop. Safari and mobile browsers cannot access serial ports.</li>
+      <li>On Windows, install the <a href="https://ftdichip.com/drivers/vcp-drivers/">FTDI VCP driver</a> first. The
+        PLUS SE will not appear as a COM port without it, and some machines need it installed twice.</li>
+      <li>Close any other program using the port, including the Arduino IDE or a PlatformIO serial monitor.</li>
+    </ul>
+
+    <h2>What happens</h2>
+    <ol>
+      <li>Pick your Stick's serial port when the browser asks.</li>
+      <li>The firmware is written, which takes about a minute.</li>
+      <li>You are prompted for your Wi-Fi network. Credentials are sent over the USB cable and saved on the device.</li>
+      <li>The Stick syncs its clock from NTP and starts counting down.</li>
+    </ol>
+
+    <div class="note">
+      Your Wi-Fi credentials are never part of the download. The published firmware contains no network details at
+      all: it asks for them after installing and stores them on the device, so this page cannot see them and neither
+      can anyone else who downloads the image.
+    </div>
+
+    <h2>Afterwards</h2>
+    <p>The Stick has a few controls once it is running:</p>
+    <ul>
+      <li>Single-click button A to force a clock re-sync, double-click to toggle the Grove lights.</li>
+      <li>Button B shows the diagnostics screen.</li>
+      <li>Over serial at 115200 baud, send <code>?</code> for the full command list.</li>
+    </ul>
+    <p>To move the device to a different network, run the installer again and choose the Wi-Fi option, or send
+      <code>w</code> over serial to forget the stored credentials.</p>
+
+    <footer>
+      <a href="https://github.com/coatsy/showcase-countdown">Source on GitHub</a> &middot; Installer powered by
+      <a href="https://esphome.github.io/esp-web-tools/">ESP Web Tools</a>
+    </footer>
+  </main>
+</body>
+
+</html>

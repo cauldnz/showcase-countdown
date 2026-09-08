@@ -16,6 +16,7 @@ __pycache__/
 .env
 .env.*
 !.env.template
+!.env.public
 
 # Ignore the tmp folder, but keep the .keep file to make sure the folder is created on clone
 tmp/*

@@ -31,6 +31,9 @@ The SPK2 HAT plugs straight onto the 8-pin Hat-Bus and drives a 1 W speaker
 through a MAX98357 I2S amplifier — worth the US$5 if you want the unit to be
 heard rather than just seen.
 
+Whichever HAT you fit, set `SPEAKER` in `.env` to match it. The firmware cannot
+probe for one, and the default routes audio to the onboard buzzer instead.
+
 Note that there are two speaker HATs in the M5Stack catalogue and they are
 **not** interchangeable: the older
 [Speaker Hat](https://shop.m5stack.com/products/m5stickc-speaker-hat) is an
@@ -40,8 +43,10 @@ analogue PAM8303 fed from the DAC pin, while SPK2 is I2S. Get SPK2.
 
 The Grove connector exposes 5 V, ground, GPIO 32 and GPIO 33. Connect the
 pixel's data-in wire to the configured GPIO (32 by default), power to 5 V, and
-ground to ground. One or two 800 kHz NeoPixel/WS2812-compatible RGB pixels are
-supported.
+ground to ground. One or two NeoPixel/WS2812-compatible RGB pixels are
+supported, at either the usual 800 kHz or the 400 kHz rate used by classic v1
+pixels. The lights are disabled by default; set `LED_ENABLED="true"` in `.env`
+to turn the output on.
 
 See the [Grove-to-NeoPixel schematic](docs/grove-neopixel-schematic.md) for the
 connector pin numbers, cable colours, level shifter, protection resistor,
@@ -69,6 +74,25 @@ unit if you already own one.
 The layout derives everything from `M5.Display.width()/height()`, so one source
 tree serves all of them.
 
+## Install from your browser
+
+The quickest way to get the firmware onto a Stick is the hosted installer at
+[coatsy.github.io/showcase-countdown](https://coatsy.github.io/showcase-countdown/).
+Plug the device in over USB, click install, and answer the Wi-Fi prompt. No
+toolchain, no clone, no `.env`.
+
+This needs Chrome, Edge, or Opera on a desktop: the page drives the serial port
+through the Web Serial API, which Safari and mobile browsers do not implement.
+
+The published image contains no network credentials. It ships with Wi-Fi unset
+and is provisioned over the
+[Improv serial standard](https://www.improv-wifi.com/serial/), so the browser
+sends the credentials down the USB cable after flashing and the device keeps
+them in NVS. Send `w` over serial to forget them again.
+
+Build the firmware yourself if you want to change the event, the palette, the
+speaker, or the lights, since those are compile-time settings.
+
 ## Setup and building
 
 ### Prerequisites
@@ -91,14 +115,18 @@ cp .env.template .env
 ```
 
 `.env` is git-ignored; `.env.template` documents the structure and is committed.
-The template covers every key, and the four with no sensible default are:
+The template covers every key, and the two with no sensible default are:
 
 | Key | Notes |
 | --- | --- |
-| `WIFI_SSID` | 2.4 GHz only — the ESP32-PICO-D4 has no 5 GHz radio |
-| `WIFI_PASSWORD` | See the note on secrets below |
 | `EVENT_NAME` | One or more titles, separated by `\|` |
 | `EVENT_DATETIME` | ISO-8601 with an **explicit** UTC offset or trailing `Z` |
+
+Wi-Fi is optional at build time. Set `WIFI_SSID` and `WIFI_PASSWORD` to bake
+credentials into a private build, or leave them out and provision the device
+over Improv instead. A compiled-in value is only a fallback: anything stored on
+the device takes precedence. Note that the ESP32-PICO-D4 has no 5 GHz radio, so
+the network must be 2.4 GHz either way.
 
 `EVENT_NAME` carries a few conveniences. Multiple titles separated by `|` are
 cycled; any title too wide for the screen scrolls marquee-style and is given at
@@ -112,22 +140,43 @@ EVENT_NAME="[red]Westpac[/] + [#00A4EF]Microsoft[/] Hackathon|Doors open 6pm"
 The panel is RGB565, so colours are quantised to five bits per channel and brand
 hex values often read duller than the named equivalents.
 
+The speaker setting is optional and defaults to the onboard buzzer:
+
+| Key       | Default    | Notes                                        |
+|-----------|------------|----------------------------------------------|
+| `SPEAKER` | `INTERNAL` | `INTERNAL`, `HAT_SPK`, `HAT_SPK2`, or `NONE` |
+
+M5Unified cannot detect a speaker HAT at runtime, so the fitted hardware has to
+be named here. Leaving this at `INTERNAL` while a HAT is attached is the usual
+cause of a unit that plays the fanfare far too quietly: the audio goes to the
+onboard buzzer and the HAT never makes a sound. Set `SPEAKER="HAT_SPK2"` for the
+SPK2 HAT, or `SPEAKER="HAT_SPK"` for the older analogue Speaker Hat. The boot
+banner reports the configured choice, so you can confirm it over serial.
+
 The Grove light settings are optional and have defaults:
 
-| Key                    | Default      | Notes                                      |
-|------------------------|--------------|--------------------------------------------|
-| `LED_TYPE`             | `NEOPIXEL`   | GRB pixels; `NONE` disables the output     |
-| `LED_COUNT`            | `1`          | One or two pixels                          |
-| `LED_PIN`              | `32`         | GPIO 32 or GPIO 33                         |
-| `LED_BRIGHTNESS`       | `64`         | Per-channel white level from 1 to 255      |
-| `LOCAL_UTC_OFFSET`     | `+10:00`     | Fixed offset from UTC; no DST calculation  |
-| `LED_ON_TIME`          | `08:00`      | Local time to turn the pixels white        |
-| `LED_OFF_TIME`         | `18:00`      | Local time to turn the pixels off          |
+| Key                | Default    | Notes                                        |
+|--------------------|------------|----------------------------------------------|
+| `LED_ENABLED`      | `false`    | Master switch for the Grove lights           |
+| `LED_TYPE`         | `NEOPIXEL` | GRB pixels at 800 kHz; `NONE` also disables  |
+| `LED_COUNT`        | `1`        | One or two pixels                            |
+| `LED_PIN`          | `32`       | GPIO 32 or GPIO 33                           |
+| `LED_BRIGHTNESS`   | `64`       | Per-channel white level from 1 to 255        |
+| `LOCAL_UTC_OFFSET` | `+10:00`   | Fixed offset from UTC; no DST calculation    |
+| `LED_ON_TIME`      | `08:00`    | Local time to turn the pixels white          |
+| `LED_OFF_TIME`     | `18:00`    | Local time to turn the pixels off            |
+
+The lights stay off until you set `LED_ENABLED="true"`, so a unit with nothing
+wired to the Grove port behaves sensibly out of the box. The remaining keys are
+ignored while the switch is off.
 
 Explicit colour-order variants such as `NEOPIXEL_RGB`, `NEOPIXEL_RBG`, and
 `NEOPIXEL_BGR` are available when a pixel does not use the usual GRB order.
-`WS2812` and `WS2812B` are aliases for the default GRB configuration. Changing
-these settings requires a rebuild and reflash.
+`WS2812` and `WS2812B` are aliases for the default GRB configuration. Classic v1
+NeoPixels are a different case again: they expect RGB ordering clocked at
+400 kHz rather than 800 kHz, so use `NEOPIXEL_V1` for those. A v1 pixel driven
+at 800 kHz typically stays dark rather than showing wrong colours. Changing any
+of these settings requires a rebuild and reflash.
 
 ### Build and flash
 
@@ -187,17 +236,29 @@ python tests/test_light_schedule.py
 ```text
 platformio.ini              Build environments
 scripts/load_env.py         .env -> generated env_config.h (pre-build)
+scripts/merge_firmware.py   Single flashable image for the web installer
 scripts/read_serial.py      One-shot serial capture, for scripted checks
 src/main.cpp                Boot sequence, display, countdown
+src/wifi_store.h            Credentials in NVS, provisioned over Improv
+web/                        Browser installer page and manifest
 .env.template               Committed structure documentation
+.env.public                 Credential-free config for the published build
 ```
 
 Plus a few extras you can find for yourself.
 
 ## A note on secrets
 
-WiFi credentials are compiled into the firmware. This is **not** a security
-boundary — they sit in plaintext in the image and can be read back off the
-flash. Fine for a countdown ornament; use a guest or IoT SSID rather than your
-primary network credential, and do not reuse this pattern for anything
-sensitive.
+Wi-Fi credentials provisioned over Improv live in NVS on the device, so they are
+not part of the firmware image and the published build carries none. They are
+still not protected: NVS is unencrypted here and can be read back off the flash
+by anyone holding the device.
+
+If you instead put `WIFI_SSID` and `WIFI_PASSWORD` in `.env`, they are compiled
+into the image in plaintext. That is fine for a private build, but such an image
+must never be published. `.env` is git-ignored for this reason, the public build
+uses `.env.public`, and CI refuses to publish if credentials appear in the build
+configuration.
+
+Either way, prefer a guest or IoT SSID over your primary network credential, and
+do not reuse this pattern for anything sensitive.
