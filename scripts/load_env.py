@@ -224,7 +224,8 @@ def render(entries, epoch, parsed):
     if led_type not in _LED_TYPES:
         fail("LED_TYPE=%r must be one of: %s" % (led_type, ", ".join(sorted(_LED_TYPES))))
     led_enabled, pixel_order, pixel_speed = _LED_TYPES[led_type]
-    led_count = integer_setting(entries, "LED_COUNT", (1, 2))
+    # Up to a small ring or jewel. Watch the Grove 5 V budget above ~8 pixels.
+    led_count = integer_range_setting(entries, "LED_COUNT", 1, 16)
     led_pin = integer_setting(entries, "LED_PIN", (32, 33))
     led_brightness = integer_range_setting(entries, "LED_BRIGHTNESS", 1, 255)
     led_on_minute = minute_of_day(entries, "LED_ON_TIME")

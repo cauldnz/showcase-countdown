@@ -32,7 +32,9 @@ func main() {
 		event   = flag.String("event", envOr("EVENT_DATETIME", ""), "event instant, RFC3339 with offset, or unix epoch")
 		title   = flag.String("title", envOr("EVENT_NAME", "Countdown"), "event name for the dashboard")
 		fakeN   = flag.Int("fake", envInt("FAKE_STICKS", 0), "number of virtual sticks to run")
-		bridgeP = flag.String("bridge", os.Getenv("BRIDGE_PORT"), "serial port of the ESP-NOW relay stick, e.g. COM5 or /dev/ttyUSB0")
+		bridgeP = flag.String("bridge", os.Getenv("BRIDGE_PORT"), "optional serial port of the ESP-NOW relay stick, e.g. COM5 or /dev/ttyUSB0 (MQTT is the default path)")
+		embed   = flag.String("embedded-broker", envOr("EMBEDDED_BROKER", ""), "run an MQTT broker in-process on this address, e.g. :1883, and connect to it")
+		teams   = flag.String("teams-file", envOr("TEAMS_FILE", ""), "JSON file that keeps team names across restarts, e.g. /etc/showcase/teams.json")
 	)
 	flag.Parse()
 
@@ -43,20 +45,36 @@ func main() {
 
 	bus := NewBus(500)
 	fleet := NewFleet(bus)
+	if n := fleet.LoadTeams(*teams); n > 0 {
+		log.Printf("teams: loaded %d from %s", n, *teams)
+	}
+	fleet.onTeamsChanged = func() { fleet.SaveTeams(*teams) }
 	app := &App{
 		fleet: fleet, policy: NewPolicy(epoch), bus: bus,
 		secret: *secret, title: *title, epoch: epoch,
 	}
 
 	if *bridgeP != "" {
-		b, err := OpenBridge(*bridgeP)
+		b, err := OpenSerialBridge(*bridgeP)
 		if err != nil {
 			log.Printf("bridge: %v (continuing without it)", err)
 		} else {
 			app.bridge = b
-			b.armFire(epoch)
-			log.Printf("bridge: relay on %s", *bridgeP)
+			log.Printf("bridge: serial relay on %s", *bridgeP)
 		}
+	}
+	app.armFire()
+
+	if *embed != "" {
+		if _, err := startEmbeddedBroker(*embed); err != nil {
+			log.Fatalf("embedded broker: %v", err)
+		}
+		host, port, _ := strings.Cut(*embed, ":")
+		if host == "" {
+			host = "127.0.0.1"
+		}
+		*broker = "tcp://" + host + ":" + port
+		time.Sleep(200 * time.Millisecond)
 	}
 
 	if err := fleet.Connect(*broker); err != nil {

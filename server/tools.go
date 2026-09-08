@@ -21,7 +21,7 @@ type App struct {
 	fleet  *Fleet
 	policy *Policy
 	bus    *Bus
-	bridge *Bridge
+	bridge *SerialBridge // optional USB path; MQTT is the usual one
 	secret string
 	title  string
 	epoch  time.Time
@@ -485,7 +485,7 @@ func (a *App) mcpServer() *mcp.Server {
 			manual, auto := a.policy.LockState()
 			return jsonResult(map[string]any{
 				"manual_lock": manual, "auto_lock": auto, "muted": a.policy.MutedIDs(),
-				"devices": a.fleet.Snapshot(),
+				"bridge": a.fleet.BridgeStatus(), "devices": a.fleet.Snapshot(),
 			}), nil, nil
 		})
 
@@ -501,12 +501,10 @@ func (a *App) setLock(on bool) {
 	for _, d := range a.fleet.Snapshot() {
 		_ = a.fleet.SendConfig(d.ID, Config{Locked: &locked})
 	}
-	if a.bridge != nil {
-		if on {
-			a.bridge.Send("lock")
-		} else {
-			a.bridge.Send("unlock")
-		}
+	if on {
+		a.bridgeSend("lock")
+	} else {
+		a.bridgeSend("unlock")
 	}
 	a.bus.Emit(Event{Kind: "lock", Text: map[bool]string{true: "room locked", false: "room unlocked"}[on]})
 }

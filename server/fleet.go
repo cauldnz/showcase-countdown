@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -100,11 +101,83 @@ type ButtonEvent struct {
 
 // Fleet is the device registry plus the broker connection.
 type Fleet struct {
-	mu      sync.RWMutex
-	devices map[string]*Device
-	waiters map[string][]chan ButtonEvent
-	bus     *Bus
-	client  mqtt.Client
+	mu         sync.RWMutex
+	devices    map[string]*Device
+	waiters    map[string][]chan ButtonEvent
+	bus        *Bus
+	client     mqtt.Client
+	bridgeText string
+
+	onTeamsChanged func() // set by main to persist team names
+}
+
+// Team names are the one piece of state that must survive a restart of the
+// router, whose broker restarts with the server. They are written to a small
+// JSON file on every change and republished as retained config on connect.
+
+type teamsFile struct {
+	Teams map[string]string `json:"teams"` // device id -> team name
+}
+
+func (f *Fleet) SaveTeams(path string) {
+	if path == "" {
+		return
+	}
+	f.mu.RLock()
+	tf := teamsFile{Teams: map[string]string{}}
+	for id, d := range f.devices {
+		if d.Team != "" {
+			tf.Teams[id] = d.Team
+		}
+	}
+	f.mu.RUnlock()
+	b, _ := json.MarshalIndent(tf, "", "  ")
+	if err := os.WriteFile(path, b, 0o644); err != nil {
+		log.Printf("teams: save %s: %v", path, err)
+	}
+}
+
+// LoadTeams seeds the registry before the broker connection so the names are
+// there when the first retained state arrives.
+func (f *Fleet) LoadTeams(path string) int {
+	if path == "" {
+		return 0
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return 0
+	}
+	var tf teamsFile
+	if json.Unmarshal(b, &tf) != nil {
+		return 0
+	}
+	f.mu.Lock()
+	for id, team := range tf.Teams {
+		f.device(id).Team = team
+	}
+	f.mu.Unlock()
+	return len(tf.Teams)
+}
+
+// RepublishTeams pushes every known team name as retained config, for a
+// broker that lost its retained messages.
+func (f *Fleet) RepublishTeams() {
+	for _, d := range f.Snapshot() {
+		if d.Team != "" {
+			team := d.Team
+			_ = f.publish(devTopic(d.ID, "cmd", "config"), Config{Team: &team, Locked: &d.Locked}, true)
+		}
+	}
+}
+
+// BridgeStatus describes the ESP-NOW bridge as last reported over MQTT.
+func (f *Fleet) BridgeStatus() string {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	if f.bridgeText == "" {
+		return "never seen"
+	}
+	return f.bridgeText
 }
 
 func NewFleet(bus *Bus) *Fleet {
@@ -127,6 +200,7 @@ func (f *Fleet) Connect(brokerURL string) error {
 		if t := c.Subscribe(topicPrefix+"#", 1, f.onMessage); t.Wait() && t.Error() != nil {
 			log.Printf("mqtt: subscribe failed: %v", t.Error())
 		}
+		f.RepublishTeams()
 	}
 	opts.OnConnectionLost = func(_ mqtt.Client, err error) {
 		log.Printf("mqtt: connection lost: %v", err)
@@ -158,6 +232,27 @@ func (f *Fleet) onMessage(_ mqtt.Client, m mqtt.Message) {
 	}
 	if len(parts) == 3 && parts[0] == "dev" && parts[2] == "state" {
 		f.onState(parts[1], m.Payload())
+		return
+	}
+	if len(parts) == 2 && parts[0] == "bridge" && parts[1] == "state" {
+		var st struct {
+			Online bool   `json:"online"`
+			Sent   int    `json:"sent"`
+			Last   string `json:"last"`
+		}
+		if json.Unmarshal(m.Payload(), &st) == nil {
+			text := "offline"
+			if st.Online {
+				text = fmt.Sprintf("online, %d frames sent, last %q", st.Sent, st.Last)
+			}
+			f.mu.Lock()
+			changed := f.bridgeText != text
+			f.bridgeText = text
+			f.mu.Unlock()
+			if changed {
+				f.bus.Emit(Event{Kind: "presence", Device: "bridge", Text: "ESP-NOW bridge " + text})
+			}
+		}
 		return
 	}
 	if len(parts) == 3 && parts[0] == "all" && parts[1] == "cmd" {
@@ -377,6 +472,13 @@ func (f *Fleet) publish(topic string, v any, retain bool) error {
 	return t.Error()
 }
 
+// PublishRaw sends a plain-text payload, for the bridge protocol.
+func (f *Fleet) PublishRaw(topic, payload string, retain bool) error {
+	t := f.client.Publish(topic, 1, retain, []byte(payload))
+	t.Wait()
+	return t.Error()
+}
+
 func devTopic(id, group, name string) string {
 	return fmt.Sprintf("%sdev/%s/%s/%s", topicPrefix, id, group, name)
 }
@@ -407,6 +509,9 @@ func (f *Fleet) SendConfig(id string, c Config) error {
 	}
 	team, locked := d.Team, d.Locked
 	f.mu.Unlock()
+	if c.Team != nil && f.onTeamsChanged != nil {
+		f.onTeamsChanged()
+	}
 	return f.publish(devTopic(id, "cmd", "config"), Config{Team: &team, Locked: &locked}, true)
 }
 
