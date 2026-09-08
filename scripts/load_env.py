@@ -45,6 +45,9 @@ DEFAULTS = {
     # Mixed into the on-screen claim code so it cannot be derived from the
     # device id printed in the boot banner.
     "CLAIM_SALT": '"showcase"',
+    # 2.4 GHz channel the event AP is pinned to; ESP-NOW frames from the bridge
+    # are sent on it and unassociated sticks park their radio there.
+    "ESPNOW_CHANNEL": "6",
 }
 
 _LINE = re.compile(r"^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$")
@@ -80,6 +83,7 @@ _SPEAKERS = {
 }
 
 _DERIVED_SETTINGS = {
+    "LED_ENABLED",  # derived from LED_TYPE; a raw key must not override it
     "SPEAKER",
     "LED_TYPE",
     "LED_COUNT",

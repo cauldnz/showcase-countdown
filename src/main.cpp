@@ -13,6 +13,7 @@
 #include <string.h>
 
 #include "env_config.h"
+#include "espnow_link.h"
 #include "fanfare.h"
 #include "light_schedule.h"
 #include "jingles.h"
@@ -1152,6 +1153,8 @@ bool syncFromNtp() {
         if (connected) {
             messaging::begin(deviceIdStr);  // idempotent
         }
+        // Lock and fire also arrive over ESP-NOW, with or without the AP.
+        espnow_link::begin(ESPNOW_CHANNEL, connected);
         Serial.printf("  heap    : %u free\n", static_cast<unsigned>(ESP.getFreeHeap()));
     } else {
         // Free ~40-50 KB of heap for the sprite, and stop burning battery.
@@ -1304,6 +1307,32 @@ void loop() {
                                     M5.Power.getBatteryLevel(), timeVerified, fired,
                                     claimCode, teamName};
         messaging::publishState(status);
+    }
+
+    bool lockFrame = false;
+    if (espnow_link::takeLock(&lockFrame)) {
+        roomLocked = lockFrame;
+        Serial.printf("  espnow  : %s\n", roomLocked ? "lock" : "unlock");
+    }
+    int64_t fireFrame = 0;
+    if (espnow_link::takeFire(&fireFrame)) {
+        // The bridge sends this three seconds before the target. A stick whose
+        // clock agrees ignores it; one that lost its sync is pulled onto the
+        // schedule so the normal arm window fires it on time.
+        if (!fired && fireFrame == static_cast<int64_t>(EVENT_EPOCH_UTC)) {
+            const int64_t localRemaining =
+                static_cast<int64_t>(EVENT_EPOCH_UTC) - static_cast<int64_t>(time(nullptr));
+            if (localRemaining < 0 || localRemaining > FIRE_ARM_WINDOW_S + 2) {
+                struct timeval tv = {static_cast<time_t>(fireFrame - FIRE_ARM_WINDOW_S), 0};
+                settimeofday(&tv, nullptr);
+                Serial.printf("  espnow  : fire frame corrected the clock (was %lld s out)\n",
+                              static_cast<long long>(localRemaining - FIRE_ARM_WINDOW_S));
+            } else {
+                Serial.println("  espnow  : fire frame, clock already agrees");
+            }
+        } else {
+            Serial.printf("  espnow  : ignored fire for %lld\n", static_cast<long long>(fireFrame));
+        }
     }
 
     const time_t now = time(nullptr);
