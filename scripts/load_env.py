@@ -38,6 +38,13 @@ DEFAULTS = {
     "LED_OFF_TIME": '"18:00"',
     "TITLE_DWELL_MS": "5000",
     "TITLE_GAP_MS": "300",
+    # Messaging broker. Empty host disables MQTT and the radio powers off after
+    # NTP sync as before.
+    "MQTT_HOST": '"192.168.8.1"',
+    "MQTT_PORT": "1883",
+    # Mixed into the on-screen claim code so it cannot be derived from the
+    # device id printed in the boot banner.
+    "CLAIM_SALT": '"showcase"',
 }
 
 _LINE = re.compile(r"^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$")

@@ -15,6 +15,9 @@
 #include "env_config.h"
 #include "fanfare.h"
 #include "light_schedule.h"
+#include "jingles.h"
+#include "messaging.h"
+#include "sequencer.h"
 #include "voice_assign.h"
 
 #ifndef WIFI_SSID
@@ -202,6 +205,247 @@ bool lightScheduleInitialized = false;
 bool lastScheduledLightsOn = false;
 
 // ---------------------------------------------------------------------------
+// Messaging state (docs/messaging.md)
+// ---------------------------------------------------------------------------
+
+constexpr uint32_t STATE_PUBLISH_MS = 10000;
+// Team commands are refused from here until the fanfare has finished, even
+// with no network: the lock is computed from the clock as well as pushed.
+constexpr int64_t LOCK_LEAD_S = 60;
+
+char deviceIdStr[8] = {0};
+uint16_t claimCode = 0;
+char teamName[32] = {0};
+bool roomLocked = false;  // retained organiser config
+uint32_t lastStatePublishMs = 0;
+
+struct Overlay {
+    char text[160];
+    char from[32];
+    messaging::Kind kind;
+    uint8_t priority;
+    uint32_t startMs;
+    uint32_t untilMs;
+    bool active;
+    bool scrolling;
+};
+Overlay overlay = {};
+
+// FNV-1a over id + salt, folded to four digits. Stable across reboots and
+// not derivable from the id alone.
+uint16_t claimCodeFor(const char* id, const char* salt) {
+    uint32_t h = 2166136261u;
+    for (const char* p = id; *p; ++p) {
+        h ^= static_cast<uint8_t>(*p);
+        h *= 16777619u;
+    }
+    for (const char* p = salt; *p; ++p) {
+        h ^= static_cast<uint8_t>(*p);
+        h *= 16777619u;
+    }
+    return static_cast<uint16_t>(1000 + (h % 9000));
+}
+
+const char* kindName(messaging::Kind kind) {
+    switch (kind) {
+        case messaging::Kind::Dm: return "dm";
+        case messaging::Kind::Shout: return "shout";
+        case messaging::Kind::Organiser: return "organiser";
+        default: return "self";
+    }
+}
+
+bool roomLockedNow() {
+    if (roomLocked) {
+        return true;
+    }
+    const int64_t remaining =
+        static_cast<int64_t>(EVENT_EPOCH_UTC) - static_cast<int64_t>(time(nullptr));
+    const int64_t fanfareS = fanfare::DURATION_MS / 1000;
+    return remaining <= LOCK_LEAD_S && remaining > -fanfareS;
+}
+
+void onDisplayCommand(const messaging::Display& d) {
+    const bool organiser = d.kind == messaging::Kind::Organiser;
+    if (roomLockedNow() && !organiser) {
+        Serial.println("  overlay : dropped, room locked");
+        return;
+    }
+    const bool current = overlay.active && millis() < overlay.untilMs;
+    if (current && !organiser && d.priority < overlay.priority) {
+        Serial.println("  overlay : dropped, lower priority");
+        return;
+    }
+    strncpy(overlay.text, d.text, sizeof(overlay.text) - 1);
+    overlay.text[sizeof(overlay.text) - 1] = '\0';
+    strncpy(overlay.from, d.from, sizeof(overlay.from) - 1);
+    overlay.from[sizeof(overlay.from) - 1] = '\0';
+    overlay.kind = d.kind;
+    overlay.priority = organiser ? 255 : d.priority;
+    overlay.startMs = millis();
+    overlay.untilMs = overlay.startMs + d.ttlMs;
+    overlay.active = true;
+    Serial.printf("  overlay : [%s] %s: %s (%lu ms)\n", kindName(d.kind), d.from, d.text,
+                  static_cast<unsigned long>(d.ttlMs));
+}
+
+// ---------------------------------------------------------------------------
+// Team audio: a non-blocking note sequencer driven from loop(). tone() is
+// asynchronous, so each note is started at its scheduled instant and the loop
+// keeps rendering and polling MQTT in between.
+// ---------------------------------------------------------------------------
+
+struct Sequence {
+    sequencer::Note notes[sequencer::MAX_NOTES];
+    size_t count;
+    size_t index;
+    uint32_t nextMs;
+};
+Sequence sequence = {};
+
+void stopSequence() {
+    if (sequence.count > 0) {
+        sequence.count = 0;
+        sequence.index = 0;
+        M5.Speaker.stop();
+    }
+}
+
+void startSequence(const char* notes) {
+    sequence.count = sequencer::parse(notes, sequence.notes, sequencer::MAX_NOTES);
+    sequence.index = 0;
+    sequence.nextMs = millis();
+}
+
+void serviceSequence() {
+    while (sequence.index < sequence.count &&
+           static_cast<int32_t>(millis() - sequence.nextMs) >= 0) {
+        const sequencer::Note& note = sequence.notes[sequence.index++];
+        if (note.hz > 0.0f && M5.Speaker.isEnabled()) {
+            M5.Speaker.tone(note.hz, note.ms);
+        }
+        sequence.nextMs += note.ms;
+    }
+    if (sequence.index >= sequence.count) {
+        sequence.count = 0;
+    }
+}
+
+void onAudioCommand(const messaging::Audio& a) {
+    if (roomLockedNow()) {
+        Serial.println("  audio   : dropped, room locked");
+        return;
+    }
+    if (a.volume > 0 && M5.Speaker.isEnabled()) {
+        M5.Speaker.setVolume(a.volume);
+    }
+    stopSequence();
+    startSequence(a.notes);
+    Serial.printf("  audio   : %s%s %u notes, %lu ms\n", a.jingle[0] ? "jingle " : "composed",
+                  a.jingle, static_cast<unsigned>(sequence.count),
+                  static_cast<unsigned long>(sequencer::totalMs(sequence.notes, sequence.count)));
+}
+
+// ---------------------------------------------------------------------------
+// LED override: a team colour and pattern on the Grove pixel, then back to the
+// daily schedule when it expires.
+// ---------------------------------------------------------------------------
+
+struct LedOverride {
+    bool active;
+    uint32_t color;
+    messaging::LedMode mode;
+    uint16_t periodMs;
+    uint32_t startMs;
+    uint32_t untilMs;
+    uint32_t lastShown;
+};
+LedOverride ledOverride = {};
+
+uint32_t scaleColor(uint32_t color, uint8_t level) {
+    const uint32_t r = ((color >> 16) & 0xFF) * level / 255;
+    const uint32_t g = ((color >> 8) & 0xFF) * level / 255;
+    const uint32_t b = (color & 0xFF) * level / 255;
+    return (r << 16) | (g << 8) | b;
+}
+
+void showColor(uint32_t color) {
+    for (uint16_t index = 0; index < LED_COUNT; ++index) {
+        lights.setPixelColor(index, color);
+    }
+    lights.show();
+}
+
+void onLedCommand(const messaging::Led& l) {
+    if (!LED_ENABLED) {
+        Serial.println("  led     : ignored (disabled)");
+        return;
+    }
+    if (roomLockedNow()) {
+        Serial.println("  led     : dropped, room locked");
+        return;
+    }
+    ledOverride.active = true;
+    ledOverride.color = l.color;
+    ledOverride.mode = l.mode;
+    ledOverride.periodMs = l.periodMs;
+    ledOverride.startMs = millis();
+    ledOverride.untilMs = ledOverride.startMs + l.ttlMs;
+    ledOverride.lastShown = 0xFFFFFFFF;
+    Serial.printf("  led     : #%06lX mode=%u period=%u ttl=%lu ms\n",
+                  static_cast<unsigned long>(l.color), static_cast<unsigned>(l.mode),
+                  static_cast<unsigned>(l.periodMs), static_cast<unsigned long>(l.ttlMs));
+}
+
+void serviceLedOverride() {
+    if (!ledOverride.active) {
+        return;
+    }
+    const uint32_t now = millis();
+    if (static_cast<int32_t>(now - ledOverride.untilMs) >= 0) {
+        ledOverride.active = false;
+        lightScheduleInitialized = false;  // re-apply the schedule on the next loop
+        return;
+    }
+    const uint32_t elapsed = now - ledOverride.startMs;
+    const uint32_t period = ledOverride.periodMs;
+    uint32_t color = ledOverride.color;
+    switch (ledOverride.mode) {
+        case messaging::LedMode::Blink:
+            color = ((elapsed / (period / 2)) % 2 == 0) ? color : 0;
+            break;
+        case messaging::LedMode::Breathe: {
+            const uint32_t phase = elapsed % period;
+            const uint32_t half = period / 2;
+            const uint32_t level = phase < half ? (phase * 255) / half : ((period - phase) * 255) / half;
+            color = scaleColor(color, static_cast<uint8_t>(level));
+            break;
+        }
+        case messaging::LedMode::Off:
+            color = 0;
+            break;
+        default:
+            break;
+    }
+    if (color != ledOverride.lastShown) {
+        ledOverride.lastShown = color;
+        showColor(color);
+    }
+}
+
+void onConfigCommand(const messaging::Config& c) {
+    strncpy(teamName, c.team, sizeof(teamName) - 1);
+    teamName[sizeof(teamName) - 1] = '\0';
+    if (c.brightness > 0) {
+        M5.Display.setBrightness(c.brightness);
+    }
+    roomLocked = c.locked;
+    Serial.printf("  config  : team='%s' brightness=%u locked=%s\n", teamName,
+                  static_cast<unsigned>(c.brightness), roomLocked ? "yes" : "no");
+}
+
+
+// ---------------------------------------------------------------------------
 // Grove lights
 // ---------------------------------------------------------------------------
 
@@ -266,6 +510,7 @@ void printSerialHelp() {
     Serial.println("  t  run the speaker tone sweep");
     Serial.println("  m  run the speaker drive test");
     Serial.println("  l  toggle the Grove lights");
+    Serial.println("  j  play the 'tada' jingle through the sequencer");
 }
 
 // ---------------------------------------------------------------------------
@@ -437,6 +682,39 @@ void drawTitle(LovyanGFX* g, int titleH) {
     }
 }
 
+// Claim code, broker link state, and team name along the bottom edge. Only
+// present when messaging is configured, so the plain countdown keeps its
+// original proportions.
+int stripHeight(LovyanGFX* g) {
+    if (!messaging::enabled()) {
+        return 0;
+    }
+    g->setFont(&fonts::Font2);
+    return g->fontHeight();
+}
+
+void drawStrip(LovyanGFX* g) {
+    if (!messaging::enabled()) {
+        return;
+    }
+    g->setFont(&fonts::Font2);
+    const int sh = g->fontHeight();
+    const int y = layout.h - sh;
+
+    char code[8];
+    snprintf(code, sizeof(code), "%04u", static_cast<unsigned>(claimCode));
+    g->setTextDatum(top_left);
+    g->setTextColor(TFT_LIGHTGREY);
+    g->drawString(code, 4, y);
+
+    g->fillCircle(layout.w / 2, y + sh / 2, 3, messaging::connected() ? TFT_GREEN : TFT_RED);
+
+    if (teamName[0] != '\0') {
+        g->setTextDatum(top_right);
+        g->drawString(teamName, layout.w - 4, y);
+    }
+}
+
 void drawCountdown(LovyanGFX* g, int64_t remaining) {
     g->fillRect(0, 0, layout.w, layout.h, TFT_BLACK);
 
@@ -453,16 +731,71 @@ void drawCountdown(LovyanGFX* g, int64_t remaining) {
     const int numberH = g->fontHeight();
     g->setFont(layout.labelFont);
     const int labelH = g->fontHeight();
+    const int stripH = stripHeight(g);
 
     constexpr int GAP = 2;
     const int bodyTop = ruleY + 1;
     const int blockH = numberH + GAP + labelH;
-    const int blockTop = bodyTop + ((layout.h - bodyTop) - blockH) / 2;
+    const int blockTop = bodyTop + ((layout.h - stripH - bodyTop) - blockH) / 2;
     const int labelTop = blockTop + numberH + GAP;
 
     const Readout r = formatRemaining(remaining);
     drawUnit(g, r.first, r.firstLabel, layout.w / 4, blockTop, labelTop);
     drawUnit(g, r.second, r.secondLabel, (layout.w * 3) / 4, blockTop, labelTop);
+    drawStrip(g);
+}
+
+// A message from a team, another team, or the organiser, above the countdown.
+void drawOverlay(LovyanGFX* g, uint32_t elapsed) {
+    g->fillRect(0, 0, layout.w, layout.h, TFT_BLACK);
+
+    uint16_t accent = TFT_CYAN;
+    char header[48];
+    switch (overlay.kind) {
+        case messaging::Kind::Dm:
+            accent = TFT_YELLOW;
+            snprintf(header, sizeof(header), "%s to you", overlay.from);
+            break;
+        case messaging::Kind::Shout:
+            accent = TFT_ORANGE;
+            snprintf(header, sizeof(header), "%s shouts", overlay.from);
+            break;
+        case messaging::Kind::Organiser:
+            accent = TFT_MAGENTA;
+            snprintf(header, sizeof(header), "ORGANISER");
+            break;
+        default:
+            snprintf(header, sizeof(header), "%s", teamName[0] ? teamName : "message");
+            break;
+    }
+
+    g->setFont(&fonts::Font2);
+    const int headerH = g->fontHeight();
+    g->setTextDatum(top_left);
+    g->setTextColor(accent);
+    g->drawString(header, 4, 2);
+    const int ruleY = headerH + 4;
+    g->drawFastHLine(4, ruleY, layout.w - 8, accent);
+
+    const int stripH = stripHeight(g);
+    g->setFont(layout.titleFont);
+    const int textH = g->fontHeight();
+    const int areaTop = ruleY + 2;
+    const int areaH = layout.h - stripH - areaTop;
+    const int textY = areaTop + (areaH - textH) / 2;
+    overlay.scrolling = drawMarqueeTitle(g, overlay.text, textY, textH + 2, elapsed) > 0;
+
+    drawStrip(g);
+}
+
+void renderOverlay(uint32_t elapsed) {
+    ensureSprite();
+    if (spriteReady) {
+        drawOverlay(&sprite(), elapsed);
+        sprite().pushSprite(0, 0);
+    } else {
+        drawOverlay(&M5.Display, elapsed);
+    }
 }
 
 void renderCountdown(int64_t remaining) {
@@ -743,7 +1076,14 @@ void onNtpSync(struct timeval*) {
 
 bool syncFromNtp() {
     WiFi.mode(WIFI_STA);
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    if (messaging::enabled()) {
+        // Modem sleep adds hundreds of ms to inbound delivery. Units with
+        // messaging are on USB power, so latency wins.
+        WiFi.setSleep(false);
+    }
+    if (WiFi.status() != WL_CONNECTED) {
+        WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    }
 
     const uint32_t deadline = millis() + WIFI_TIMEOUT_MS;
     while (WiFi.status() != WL_CONNECTED && millis() < deadline) {
@@ -801,9 +1141,18 @@ bool syncFromNtp() {
                       static_cast<long long>(EVENT_EPOCH_UTC) - static_cast<long long>(now));
     }
 
-    // Free ~40-50 KB of heap for the sprite, and stop burning battery.
-    WiFi.disconnect(true);
-    WiFi.mode(WIFI_OFF);
+    if (messaging::enabled()) {
+        // The radio stays up for MQTT. Auto-reconnect covers a dropped link.
+        WiFi.setAutoReconnect(true);
+        if (connected) {
+            messaging::begin(deviceIdStr);  // idempotent
+        }
+        Serial.printf("  heap    : %u free\n", static_cast<unsigned>(ESP.getFreeHeap()));
+    } else {
+        // Free ~40-50 KB of heap for the sprite, and stop burning battery.
+        WiFi.disconnect(true);
+        WiFi.mode(WIFI_OFF);
+    }
 
     if (ok) {
         timeVerified = true;
@@ -869,6 +1218,12 @@ void setup() {
                   mac[4], mac[5]);
     Serial.printf("  roll    : %u\n", voice::rollFor(efuse));
     Serial.printf("  voice   : %u (%s)\n", voiceIndex, fanfare::VOICES[voiceIndex].name);
+
+    snprintf(deviceIdStr, sizeof(deviceIdStr), "%02x%02x%02x", mac[3], mac[4], mac[5]);
+    claimCode = claimCodeFor(deviceIdStr, CLAIM_SALT);
+    Serial.printf("  id      : %s\n", deviceIdStr);
+    Serial.printf("  claim   : %04u\n", static_cast<unsigned>(claimCode));
+    Serial.printf("  mqtt    : %s\n", messaging::enabled() ? MQTT_HOST : "disabled");
     printSerialHelp();
 
     if (M5.Speaker.isEnabled()) {
@@ -910,19 +1265,39 @@ void loop() {
             driveTest();
         } else if (command == 'l' || command == 'L') {
             toggleLights("serial");
+        } else if (command == 'j' || command == 'J') {
+            messaging::Audio a = {};
+            strncpy(a.notes, jingles::find("tada"), sizeof(a.notes) - 1);
+            strncpy(a.jingle, "tada", sizeof(a.jingle) - 1);
+            onAudioCommand(a);
         } else if (command == '?') {
             printSerialHelp();
         }
     }
 
     if (M5.BtnA.wasDoubleClicked()) {
+        messaging::publishButton('A', "double");
         toggleLights("button");
     } else if (M5.BtnA.wasSingleClicked()) {
+        messaging::publishButton('A', "click");
         renderMessage(EVENT_NAME, "syncing...");
         syncFromNtp();
     }
     if (M5.BtnB.wasPressed()) {
+        messaging::publishButton('B', "press");
         showDiagnostics = !showDiagnostics;
+    }
+
+    static const messaging::Handlers handlers = {onDisplayCommand, onConfigCommand,
+                                                 onAudioCommand, onLedCommand};
+    messaging::poll(handlers);
+    serviceSequence();
+    serviceLedOverride();
+    if (messaging::connected() && millis() - lastStatePublishMs >= STATE_PUBLISH_MS) {
+        lastStatePublishMs = millis();
+        messaging::Status status = {fanfare::VOICES[voiceIndex].name,
+                                    M5.Power.getBatteryLevel(), timeVerified, fired};
+        messaging::publishState(status);
     }
 
     const time_t now = time(nullptr);
@@ -941,6 +1316,7 @@ void loop() {
     }
 
     if (!fired && remaining <= FIRE_ARM_WINDOW_S) {
+        stopSequence();  // nothing plays over the fanfare
         waitForFireInstant();
         performCelebration();
         fired = true;
@@ -957,6 +1333,15 @@ void loop() {
     if (showDiagnostics) {
         renderDiagnostics();
         M5.delay(FRAME_MS_IDLE);
+        return;
+    }
+
+    if (overlay.active && millis() >= overlay.untilMs) {
+        overlay.active = false;
+    }
+    if (overlay.active) {
+        renderOverlay(millis() - overlay.startMs);
+        M5.delay(overlay.scrolling ? FRAME_MS_SCROLLING : FRAME_MS_IDLE);
         return;
     }
 
