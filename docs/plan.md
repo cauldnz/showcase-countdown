@@ -159,7 +159,8 @@ Principles:
 1. ~~Firmware: WiFi stays up, MQTT connect, retained state, LWT, display overlay,
    claim strip. Test with Mosquitto in Podman.~~ **Done.**
 2. ~~Firmware: audio sequencer and jingles, LED modes, button events, config and
-   lock handling.~~ **Done.** ESP-NOW receiver still to do.
+   lock handling.~~ **Done.** ESP-NOW receiver and bridge sketch built;
+   untested until a second stick is on the bench.
 3. ~~Server: MCP endpoint, claim, own-device tools, shout, DM, inbox, lock,
    cooldowns, organiser tools. Fake fleet. Dashboard with canvas screens and
    live log.~~ **Done.**
