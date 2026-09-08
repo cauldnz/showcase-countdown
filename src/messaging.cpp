@@ -172,8 +172,10 @@ void dispatch(const Inbound& msg, const Handlers& h) {
         }
     } else if (strcmp(command, "config") == 0 && onConfig) {
         Config c = {};
+        c.hasTeam = !doc["team"].isNull();
         copyString(c.team, sizeof(c.team), doc["team"] | "");
         c.brightness = doc["brightness"] | 0;
+        c.hasLocked = !doc["locked"].isNull();
         c.locked = doc["locked"] | false;
         onConfig(c);
     } else {
@@ -239,6 +241,8 @@ void publishState(const Status& status) {
     doc["battery"] = status.battery;
     doc["ntp"] = status.ntp;
     doc["fired"] = status.fired;
+    doc["code"] = status.code;
+    doc["team"] = status.team ? status.team : "";
     doc["uptime_s"] = millis() / 1000;
     doc["heap"] = ESP.getFreeHeap();
     doc["fw"] = FW_VERSION;

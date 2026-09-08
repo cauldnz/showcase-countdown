@@ -22,8 +22,10 @@ struct Display {
 
 struct Config {
     char team[32];
+    bool hasTeam;        // false when the payload carried no "team" key
     uint8_t brightness;  // 0 = leave alone
     bool locked;
+    bool hasLocked;
 };
 
 struct Audio {
@@ -53,6 +55,8 @@ struct Status {
     int battery;
     bool ntp;
     bool fired;
+    uint16_t code;       // claim code shown on screen
+    const char* team;
 };
 
 // Called once after WiFi is up. deviceId is the 6 hex-char id from the MAC.

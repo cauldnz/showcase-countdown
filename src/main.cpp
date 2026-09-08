@@ -434,12 +434,17 @@ void serviceLedOverride() {
 }
 
 void onConfigCommand(const messaging::Config& c) {
-    strncpy(teamName, c.team, sizeof(teamName) - 1);
-    teamName[sizeof(teamName) - 1] = '\0';
+    if (c.hasTeam) {
+        strncpy(teamName, c.team, sizeof(teamName) - 1);
+        teamName[sizeof(teamName) - 1] = '\0';
+    }
     if (c.brightness > 0) {
         M5.Display.setBrightness(c.brightness);
     }
-    roomLocked = c.locked;
+    if (c.hasLocked) {
+        roomLocked = c.locked;
+    }
+    lastStatePublishMs = 0;  // reflect the change in state promptly
     Serial.printf("  config  : team='%s' brightness=%u locked=%s\n", teamName,
                   static_cast<unsigned>(c.brightness), roomLocked ? "yes" : "no");
 }
@@ -1296,7 +1301,8 @@ void loop() {
     if (messaging::connected() && millis() - lastStatePublishMs >= STATE_PUBLISH_MS) {
         lastStatePublishMs = millis();
         messaging::Status status = {fanfare::VOICES[voiceIndex].name,
-                                    M5.Power.getBatteryLevel(), timeVerified, fired};
+                                    M5.Power.getBatteryLevel(), timeVerified, fired,
+                                    claimCode, teamName};
         messaging::publishState(status);
     }
 
