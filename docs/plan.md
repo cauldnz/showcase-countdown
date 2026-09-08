@@ -156,15 +156,15 @@ Principles:
 
 ### Today, on the NUC
 
-1. Firmware: WiFi stays up, MQTT connect, retained state, LWT, display overlay,
-   claim strip. Test with Mosquitto in Podman. **In progress.**
-2. Firmware: audio sequencer and jingles, LED modes, button events, config and
-   lock handling.
-3. Server: MCP endpoint, claim, own-device tools, shout, DM, inbox, lock,
+1. ~~Firmware: WiFi stays up, MQTT connect, retained state, LWT, display overlay,
+   claim strip. Test with Mosquitto in Podman.~~ **Done.**
+2. ~~Firmware: audio sequencer and jingles, LED modes, button events, config and
+   lock handling.~~ **Done.** ESP-NOW receiver still to do.
+3. ~~Server: MCP endpoint, claim, own-device tools, shout, DM, inbox, lock,
    cooldowns, organiser tools. Fake fleet. Dashboard with canvas screens and
-   live log.
-4. End-to-end on the NUC: Claude Code with the MCP server, one real stick plus
-   eleven fake ones.
+   live log.~~ **Done.**
+4. End-to-end on the NUC: one real stick plus eleven fake ones driven over MCP
+   from a scripted client. **Done.** Claude Code as the client still to try.
 
 ### This evening, on the AX3000
 

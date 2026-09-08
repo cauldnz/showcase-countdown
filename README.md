@@ -182,13 +182,44 @@ Run the deterministic schedule checks with:
 python tests/test_light_schedule.py
 ```
 
+## Room messaging
+
+With `MQTT_HOST` set in `.env`, each unit keeps WiFi up after the time sync and
+joins an MQTT broker. Teams then drive their own stick from their coding agents
+through an MCP server: messages, jingles and composed tunes, LED patterns,
+shouts to the room, and messages to other tables. The four-digit claim code
+in the bottom-left of the screen is the team's credential.
+
+| Doc | What it covers |
+| --- | --- |
+| [docs/plan.md](docs/plan.md) | The decisions, architecture and schedule |
+| [docs/messaging.md](docs/messaging.md) | MQTT topics, payloads and the tool list |
+| [docs/teams.md](docs/teams.md) | The one-page handout for tables |
+| [server/](server/) | The Go MCP server, dashboard, fake fleet, and router deploy |
+
+Run it locally against any broker, with a dozen virtual sticks:
+
+```sh
+cd server && go build -o showcase-server . && \
+  EVENT_DATETIME="2026-11-15T09:00:00+11:00" ORGANISER_SECRET=secret \
+  ./showcase-server -broker tcp://127.0.0.1:1883 -fake 12
+```
+
+Dashboard at `http://localhost:8080/`, MCP at `http://localhost:8080/mcp/<code>`.
+
 ## Layout
 
 ```text
 platformio.ini              Build environments
 scripts/load_env.py         .env -> generated env_config.h (pre-build)
+scripts/fetch_env.ps1       Pull .env from Infisical (this fork's setup)
 scripts/read_serial.py      One-shot serial capture, for scripted checks
+scripts/lan_relay.py        Expose a loopback-only broker port on the LAN
 src/main.cpp                Boot sequence, display, countdown
+src/messaging.cpp           MQTT session, commands in, state and events out
+src/sequencer.h             Note-string parser for team audio
+src/jingles.h               Built-in jingles
+server/                     Go MCP server, dashboard, fake fleet, deploy
 .env.template               Committed structure documentation
 ```
 
