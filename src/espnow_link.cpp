@@ -21,8 +21,10 @@ volatile bool lockValue = false;
 volatile bool firePending = false;
 volatile int64_t fireEpoch = 0;
 
-void onReceive(const uint8_t*, const uint8_t* data, int length) {
+void onReceive(const uint8_t* mac, const uint8_t* data, int length) {
     const size_t magicLength = strlen(MAGIC);
+    // Diagnostic: every frame, so a channel or sender problem is visible.
+    Serial.printf("  espnow  : frame from %02X:%02X:%02X len %d\n", mac[3], mac[4], mac[5], length);
     if (length <= static_cast<int>(magicLength) || length > 64) {
         return;
     }

@@ -70,6 +70,10 @@ void publishState() {
     esp_mqtt_client_publish(mqtt, STATE_TOPIC, out, n, 1, 1);
 }
 
+void onSent(const uint8_t*, esp_now_send_status_t status) {
+    Serial.printf("tx %s\n", status == ESP_NOW_SEND_SUCCESS ? "ok" : "FAIL");
+}
+
 void startEspNow() {
     if (espNowReady) {
         return;
@@ -78,6 +82,7 @@ void startEspNow() {
         Serial.println("err esp_now_init failed");
         return;
     }
+    esp_now_register_send_cb(onSent);
     esp_now_peer_info_t peer = {};
     memcpy(peer.peer_addr, BROADCAST, 6);
     peer.channel = 0;  // whatever channel the station is on
@@ -95,7 +100,9 @@ bool broadcast(const char* body) {
     }
     bool ok = true;
     for (int i = 0; i < REPEATS; ++i) {
-        if (esp_now_send(BROADCAST, reinterpret_cast<const uint8_t*>(frame), n) != ESP_OK) {
+        const esp_err_t err = esp_now_send(BROADCAST, reinterpret_cast<const uint8_t*>(frame), n);
+        if (err != ESP_OK) {
+            Serial.printf("err esp_now_send: %s\n", esp_err_to_name(err));
             ok = false;
         }
         delay(REPEAT_GAP_MS);
@@ -186,6 +193,9 @@ void setup() {
     while (WiFi.status() != WL_CONNECTED && millis() < deadline) {
         delay(100);
     }
+    // Power save fully off. With modem sleep on, esp_now_send wakes the radio
+    // and the MQTT TCP socket is silently lost without a disconnect event.
+    esp_wifi_set_ps(WIFI_PS_NONE);
     if (WiFi.status() == WL_CONNECTED) {
         Serial.printf("wifi %s channel %d ip %s\n", WIFI_SSID, WiFi.channel(),
                       WiFi.localIP().toString().c_str());
