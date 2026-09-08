@@ -156,6 +156,43 @@
       color: var(--muted);
     }
 
+    .hint {
+      margin-top: .55rem;
+      font-size: .85rem;
+      color: var(--muted);
+    }
+
+    .hint summary {
+      cursor: pointer;
+      color: var(--accent);
+    }
+
+    .hint p {
+      margin: .6rem 0;
+    }
+
+    .swatches {
+      list-style: none;
+      padding: 0;
+      margin: .6rem 0;
+      display: flex;
+      flex-wrap: wrap;
+      gap: .35rem .75rem;
+    }
+
+    .swatches li {
+      display: flex;
+      align-items: center;
+      gap: .35rem;
+    }
+
+    .swatches i {
+      width: .8rem;
+      height: .8rem;
+      border-radius: 3px;
+      border: 1px solid var(--line);
+    }
+
     footer {
       margin-top: 3rem;
       padding-top: 1.25rem;
@@ -217,7 +254,32 @@
     <div class="config">
       <div class="field">
         <label for="cfgTitle">Event title</label>
-        <input id="cfgTitle" type="text" placeholder="Launch Day" autocomplete="off">
+        <input id="cfgTitle" type="text" placeholder="[red]Launch[/] Day|Doors open 6pm" autocomplete="off">
+        <details class="hint">
+          <summary>Formatting help</summary>
+          <p>Separate several titles with <code>|</code> and the device cycles through them. A title too wide for the
+            screen scrolls instead of being cut off.</p>
+          <p>Open a colour with a tag and return to white with <code>[/]</code>, for example
+            <code>[red]Launch[/] Day</code>. The named colours are:</p>
+          <ul class="swatches">
+            <li><i style="background:#F80000"></i><code>[red]</code></li>
+            <li><i style="background:#00FC00"></i><code>[green]</code></li>
+            <li><i style="background:#0000F8"></i><code>[blue]</code></li>
+            <li><i style="background:#F8FC00"></i><code>[yellow]</code></li>
+            <li><i style="background:#00FCF8"></i><code>[cyan]</code></li>
+            <li><i style="background:#F800F8"></i><code>[magenta]</code></li>
+            <li><i style="background:#F8FCF8"></i><code>[white]</code></li>
+            <li><i style="background:#F8A400"></i><code>[orange]</code></li>
+            <li><i style="background:#808080"></i><code>[grey]</code></li>
+            <li><i style="background:#80CCE8"></i><code>[skyblue]</code></li>
+            <li><i style="background:#F8C0C8"></i><code>[pink]</code></li>
+          </ul>
+          <p>Any other colour uses <code>[#RRGGBB]</code>, such as <code>[#00A4EF]</code>. The panel is RGB565, so
+            shades are approximate and brand colours often read duller than the named equivalents. Plain
+            <code>[blue]</code> is very dark on this screen; <code>[skyblue]</code> shows up far better.</p>
+          <p>A tag that is not recognised is drawn as literal text rather than silently dropped, so a typo is visible
+            instead of swallowing the words after it.</p>
+        </details>
       </div>
       <div class="field">
         <label for="cfgTimezone">Time zone</label>
@@ -236,9 +298,6 @@
       <button id="cfgApply" type="button" disabled>Apply settings</button>
       <div id="configLog" hidden></div>
     </div>
-
-    <p>Separate multiple titles with <code>|</code> and they cycle on screen. Colour markup works too, for example
-      <code>[red]Launch[/] Day</code>.</p>
 
     <div class="note">
       The device stores a fixed offset from UTC and does no daylight-saving calculation of its own. This page reads the
