@@ -164,8 +164,14 @@ Organiser scope (calls carrying the organiser secret) adds `broadcast`,
 A second path for the two messages that must land even if a stick's MQTT
 session has dropped: `lock` / `unlock`, and `fire <epoch>`. A spare stick on the
 router's USB port relays them from the server over serial. All sticks listen on
-the AP's pinned 2.4 GHz channel. `fire` only starts the celebration when the
-epoch matches the built-in target within a few seconds.
+the AP's pinned 2.4 GHz channel.
+
+`fire` is a last resort for a unit that never got a trusted clock. A unit only
+acts on the frame when the epoch matches its built-in target **and it has no
+verified time of its own**; a unit that has synced from NTP ignores it. ESP-NOW
+is unauthenticated broadcast and the event epoch is public, so a synced unit
+must never let a frame move its clock: otherwise anyone in radio range could
+fire the room at any hour, and the fired state latches for the rest of the day.
 
 ## Build order
 

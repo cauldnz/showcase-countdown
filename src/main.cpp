@@ -361,6 +361,16 @@ const char* kindName(messaging::Kind kind) {
     }
 }
 
+// True once the fanfare is close enough that nothing may risk delaying it.
+// Publishing blocks on the MQTT client lock, which can stall for the network
+// timeout on a half-open socket, so it stops well before the fire instant.
+bool nearFanfare() {
+    const int64_t remaining =
+        static_cast<int64_t>(EVENT_EPOCH_UTC) - static_cast<int64_t>(time(nullptr));
+    const int64_t fanfareS = fanfare::DURATION_MS / 1000;
+    return remaining <= LOCK_LEAD_S && remaining > -fanfareS;
+}
+
 bool roomLockedNow() {
     if (roomLocked) {
         return true;
@@ -377,7 +387,7 @@ void onDisplayCommand(const messaging::Display& d) {
         Serial.println("  overlay : dropped, room locked");
         return;
     }
-    const bool current = overlay.active && millis() < overlay.untilMs;
+    const bool current = overlay.active && static_cast<int32_t>(millis() - overlay.untilMs) < 0;
     if (current && !organiser && d.priority < overlay.priority) {
         Serial.println("  overlay : dropped, lower priority");
         return;
@@ -1513,6 +1523,11 @@ void setup() {
         auditionAllVoices();
     }
 
+    // Claim the 64 KB sprite before WiFi, MQTT and ESP-NOW fragment the heap.
+    // Falling back to direct drawing costs render time inside the fanfare's
+    // note loop, which is where jitter turns into an audible ragged attack.
+    ensureSprite();
+
     titleStartMs = millis();
     renderMessage(plainTitle.c_str(), "syncing...");
     syncFromNtp();
@@ -1623,7 +1638,8 @@ void loop() {
     messaging::poll(handlers);
     serviceSequence();
     serviceLedOverride();
-    if (messaging::connected() && millis() - lastStatePublishMs >= STATE_PUBLISH_MS) {
+    if (messaging::connected() && !nearFanfare() &&
+        millis() - lastStatePublishMs >= STATE_PUBLISH_MS) {
         lastStatePublishMs = millis();
         messaging::Status status = {fanfare::VOICES[voiceIndex].name,
                                     M5.Power.getBatteryLevel(), timeVerified, fired,
@@ -1638,22 +1654,22 @@ void loop() {
     }
     int64_t fireFrame = 0;
     if (espnow_link::takeFire(&fireFrame)) {
-        // The bridge sends this three seconds before the target. A stick whose
-        // clock agrees ignores it; one that lost its sync is pulled onto the
-        // schedule so the normal arm window fires it on time.
-        if (!fired && fireFrame == static_cast<int64_t>(EVENT_EPOCH_UTC)) {
-            const int64_t localRemaining =
-                static_cast<int64_t>(EVENT_EPOCH_UTC) - static_cast<int64_t>(time(nullptr));
-            if (localRemaining < 0 || localRemaining > FIRE_ARM_WINDOW_S + 2) {
-                struct timeval tv = {static_cast<time_t>(fireFrame - FIRE_ARM_WINDOW_S), 0};
-                settimeofday(&tv, nullptr);
-                Serial.printf("  espnow  : fire frame corrected the clock (was %lld s out)\n",
-                              static_cast<long long>(localRemaining - FIRE_ARM_WINDOW_S));
-            } else {
-                Serial.println("  espnow  : fire frame, clock already agrees");
-            }
-        } else {
+        // Last-resort path for a unit that never got a trusted clock: the
+        // bridge sends this three seconds before the target.
+        //
+        // A frame is only ever acted on when this unit has NO verified time of
+        // its own. ESP-NOW is unauthenticated broadcast and the event epoch is
+        // public, so a unit that knows the time must never let a frame move its
+        // clock - otherwise anyone in radio range could fire the whole room at
+        // any hour, and `fired` would latch for the rest of the day.
+        if (fired || fireFrame != static_cast<int64_t>(EVENT_EPOCH_UTC)) {
             Serial.printf("  espnow  : ignored fire for %lld\n", static_cast<long long>(fireFrame));
+        } else if (timeVerified) {
+            Serial.println("  espnow  : fire frame ignored, this unit has a verified clock");
+        } else {
+            struct timeval tv = {static_cast<time_t>(fireFrame - FIRE_ARM_WINDOW_S), 0};
+            settimeofday(&tv, nullptr);
+            Serial.println("  espnow  : fire frame accepted, no verified clock of our own");
         }
     }
 
@@ -1674,6 +1690,12 @@ void loop() {
 
     if (!fired && remaining <= FIRE_ARM_WINDOW_S) {
         stopSequence();  // nothing plays over the fanfare
+        // A team's play() may have left the volume anywhere; the fanfare is
+        // the one thing that must be heard.
+        if (M5.Speaker.isEnabled()) {
+            M5.Speaker.setVolume(255);
+            M5.Speaker.setAllChannelVolume(255);
+        }
         waitForFireInstant();
         performCelebration();
         fired = true;
@@ -1693,7 +1715,7 @@ void loop() {
         return;
     }
 
-    if (overlay.active && millis() >= overlay.untilMs) {
+    if (overlay.active && static_cast<int32_t>(millis() - overlay.untilMs) >= 0) {
         overlay.active = false;
     }
     if (overlay.active) {

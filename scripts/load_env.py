@@ -45,9 +45,10 @@ DEFAULTS = {
     "LED_OFF_TIME": '"18:00"',
     "TITLE_DWELL_MS": "5000",
     "TITLE_GAP_MS": "300",
-    # Room messaging (see docs/messaging.md). Empty MQTT_HOST disables it and
-    # the radio powers off after the NTP sync as before.
-    "MQTT_HOST": '"192.168.8.1"',
+    # Room messaging (see docs/messaging.md). Off unless a broker is named, so
+    # a published image keeps the original behaviour: the radio powers off
+    # after the NTP sync and no MQTT client is started.
+    "MQTT_HOST": '""',
     "MQTT_PORT": "1883",
     # Mixed into the on-screen claim code so it cannot be derived from the
     # device id printed in the boot banner.
