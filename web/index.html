@@ -166,6 +166,61 @@
       <a href="https://esphome.github.io/esp-web-tools/">ESP Web Tools</a>
     </footer>
   </main>
+
+  <script>
+    // ESP Web Tools' "No port selected" dialog lists drivers for the CP2102 and
+    // CH34x bridges, but the PLUS SE uses an FTDI part. That dialog renders in a
+    // closed-off shadow root with no slot to extend, so the entry is added once
+    // the dialog appears. If the internals ever change, the observer simply
+    // finds nothing and the dialog is left as it shipped.
+    (function () {
+      var DIALOG = 'ewt-no-port-picked-dialog';
+
+      function buildEntry() {
+        var item = document.createElement('li');
+        item.dataset.ftdiDriver = '';
+        item.appendChild(document.createTextNode('FTDI drivers, used by the M5StickC PLUS SE: '));
+
+        var link = document.createElement('a');
+        link.href = 'https://ftdichip.com/drivers/vcp-drivers/';
+        link.target = '_blank';
+        link.rel = 'noopener';
+        link.textContent = 'Windows, macOS and Linux';
+        item.appendChild(link);
+
+        item.appendChild(document.createTextNode(
+          '. Without this the Stick never appears as a port, and some Windows machines '
+          + 'need it installed twice before it takes.'));
+        return item;
+      }
+
+      function addEntry(dialog) {
+        var attempts = 0;
+        var timer = setInterval(function () {
+          var root = dialog.shadowRoot;
+          var list = root && root.querySelector('ul');
+          if (list) {
+            clearInterval(timer);
+            if (!list.querySelector('[data-ftdi-driver]')) {
+              list.insertBefore(buildEntry(), list.firstChild);
+            }
+          } else if (++attempts > 40) {
+            clearInterval(timer);
+          }
+        }, 50);
+      }
+
+      new MutationObserver(function (records) {
+        records.forEach(function (record) {
+          Array.prototype.forEach.call(record.addedNodes, function (node) {
+            if (node.nodeType === 1 && node.localName === DIALOG) {
+              addEntry(node);
+            }
+          });
+        });
+      }).observe(document.body, { childList: true });
+    })();
+  </script>
 </body>
 
 </html>

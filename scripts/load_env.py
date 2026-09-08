@@ -50,9 +50,6 @@ DEFAULTS = {
 _LINE = re.compile(r"^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$")
 _NUMERIC = re.compile(r"^[+-]?(?:\d+|\d*\.\d+)$")
 
-# Colour markup such as [red] / [#FF0000] / [/]. Stripped for the plain-text
-# EVENT_NAME, kept intact in EVENT_TITLES where it is rendered.
-_MARKUP = re.compile(r"\[(?:/|#[0-9A-Fa-f]{6}|[A-Za-z]+)\]")
 _UTC_OFFSET = re.compile(r"^(?:UTC)?([+-])(\d{1,2})(?::([0-5]\d))?$", re.IGNORECASE)
 _CLOCK_TIME = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
 
@@ -101,10 +98,6 @@ _DERIVED_SETTINGS = {
     "LED_ON_TIME",
     "LED_OFF_TIME",
 }
-
-
-def strip_markup(text):
-    return _MARKUP.sub("", text).strip()
 
 
 def fail(message):
@@ -259,13 +252,13 @@ def render(entries, epoch, parsed):
     ]
 
     # EVENT_NAME is pipe-separated so one key can carry a rotating set of titles.
+    # The firmware splits and strips markup itself, because the titles can also
+    # be replaced at runtime over serial.
     titles = [part.strip() for part in entries["EVENT_NAME"][0].split("|")]
     titles = [title for title in titles if title]
     if not titles:
         sys.exit("load_env: EVENT_NAME is empty")
-    lines.append("#define EVENT_NAME %s" % c_string(strip_markup(titles[0])))
-    lines.append("#define EVENT_TITLE_COUNT %d" % len(titles))
-    lines.append("#define EVENT_TITLES {%s}" % ", ".join(c_string(t) for t in titles))
+    lines.append("#define EVENT_TITLES_RAW %s" % c_string("|".join(titles)))
     lines.append("")
     lines.append("#define SPEAKER_NAME %s" % c_string(speaker))
     lines.append("#define SPEAKER_INTERNAL %d" % internal_spk)

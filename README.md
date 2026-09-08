@@ -90,8 +90,38 @@ and is provisioned over the
 sends the credentials down the USB cable after flashing and the device keeps
 them in NVS. Send `w` over serial to forget them again.
 
-Build the firmware yourself if you want to change the event, the palette, the
-speaker, or the lights, since those are compile-time settings.
+Build the firmware yourself if you want to change the event date, the palette,
+or the lights, since those are compile-time settings. The event title, speaker
+type, and time zone can be changed over serial without rebuilding.
+
+## Configuring a device over serial
+
+The event title, speaker type, and time zone can be changed on a running device
+without rebuilding. Connect at 115200 baud, or use the console built into the
+[hosted installer](https://coatsy.github.io/showcase-countdown/), and send a
+single key:
+
+| Key | Effect |
+| --- | --- |
+| `?` | List the available commands |
+| `i` | Show the current settings |
+| `e` | Set the event title(s), pipe-separated, colour markup allowed |
+| `p` | Set the speaker type |
+| `z` | Choose a time zone from a numbered list |
+| `w` | Forget the stored Wi-Fi credentials |
+| `x` | Reset settings to the values the firmware was built with |
+
+Commands that need a value print a prompt and read a line, so type the value and
+press Enter. Enter on its own leaves the setting alone, and Escape cancels.
+
+Everything set this way lives in NVS and survives a power cycle. The values in
+`.env` become the defaults: a device that has never been configured behaves
+exactly as its build intended, and `x` returns it to that state. Changing the
+speaker restarts the device, because M5Unified selects the audio hardware during
+startup.
+
+The event date is not in this list. It is resolved to a fixed epoch at build
+time, so moving the event still means a rebuild and reflash.
 
 ## Setup and building
 
@@ -150,8 +180,9 @@ M5Unified cannot detect a speaker HAT at runtime, so the fitted hardware has to
 be named here. Leaving this at `INTERNAL` while a HAT is attached is the usual
 cause of a unit that plays the fanfare far too quietly: the audio goes to the
 onboard buzzer and the HAT never makes a sound. Set `SPEAKER="HAT_SPK2"` for the
-SPK2 HAT, or `SPEAKER="HAT_SPK"` for the older analogue Speaker Hat. The boot
-banner reports the configured choice, so you can confirm it over serial.
+SPK2 HAT, or `SPEAKER="HAT_SPK"` for the older analogue Speaker Hat. This is only
+the default; it can also be changed on a running device with the `p` command.
+The boot banner reports the configured choice either way.
 
 The Grove light settings are optional and have defaults:
 
@@ -239,7 +270,7 @@ scripts/load_env.py         .env -> generated env_config.h (pre-build)
 scripts/merge_firmware.py   Single flashable image for the web installer
 scripts/read_serial.py      One-shot serial capture, for scripted checks
 src/main.cpp                Boot sequence, display, countdown
-src/wifi_store.h            Credentials in NVS, provisioned over Improv
+src/settings.h              Runtime settings in NVS, provisioned over serial
 web/                        Browser installer page and manifest
 .env.template               Committed structure documentation
 .env.public                 Credential-free config for the published build
