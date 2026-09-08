@@ -328,6 +328,74 @@ void printSettings() {
                   settings::wifiConfigured() ? settings::ssid().c_str() : "NOT PROVISIONED");
 }
 
+// Commands issued by software rather than a person, so values arrive with the
+// command instead of through a prompt. Every reply starts ok: or err: so the
+// caller can tell the outcome without parsing prose.
+String commandBuffer;
+bool collectingCommand = false;
+
+bool parseLong(const String& text, long* value) {
+    if (text.length() == 0) {
+        return false;
+    }
+    for (size_t i = 0; i < text.length(); ++i) {
+        const char c = text[i];
+        if (!isdigit(c) && !(i == 0 && (c == '-' || c == '+'))) {
+            return false;
+        }
+    }
+    *value = text.toInt();
+    return true;
+}
+
+void handleMachineCommand(const String& line) {
+    const int space = line.indexOf(' ');
+    const String verb = space < 0 ? line : line.substring(0, space);
+    String arg = space < 0 ? String("") : line.substring(space + 1);
+    arg.trim();
+
+    if (verb == "get") {
+        const long offset = settings::utcOffsetSeconds();
+        Serial.printf("ok: get title=%s\n", settings::eventTitles().c_str());
+        Serial.printf("ok: get speaker=%s\n", settings::speakerName().c_str());
+        Serial.printf("ok: get tz=%ld\n", offset);
+        return;
+    }
+
+    if (verb == "tz") {
+        long seconds = 0;
+        if (!parseLong(arg, &seconds) || !settings::setUtcOffsetSeconds(seconds)) {
+            Serial.println("err: tz needs an offset in seconds between -43200 and 50400");
+            return;
+        }
+        Serial.printf("ok: tz=%ld (UTC%s)\n", seconds,
+                      settings::formatUtcOffset(seconds).c_str());
+        return;
+    }
+
+    if (verb == "title") {
+        if (arg.length() == 0) {
+            Serial.println("err: title needs a value");
+            return;
+        }
+        settings::setEventTitles(arg);
+        loadTitles();
+        Serial.printf("ok: title=%s\n", settings::eventTitles().c_str());
+        return;
+    }
+
+    if (verb == "speaker") {
+        if (!settings::setSpeaker(arg)) {
+            Serial.println("err: speaker must be NONE, INTERNAL, HAT_SPK, or HAT_SPK2");
+            return;
+        }
+        Serial.printf("ok: speaker=%s (restart to apply)\n", settings::speakerName().c_str());
+        return;
+    }
+
+    Serial.printf("err: unknown command %s\n", verb.c_str());
+}
+
 // Settings that need a value read a whole line, so input is buffered until
 // Enter rather than dispatched per character like the single-key commands.
 enum class Prompt { None, EventTitles, Speaker, Timezone };
@@ -1111,13 +1179,29 @@ void loop() {
             continue;
         }
 
+        if (collectingCommand) {
+            const int c = Serial.read();
+            if (c == '\r' || c == '\n') {
+                collectingCommand = false;
+                commandBuffer.trim();
+                handleMachineCommand(commandBuffer);
+                commandBuffer = "";
+            } else if (commandBuffer.length() < 200) {
+                commandBuffer += static_cast<char>(c);
+            }
+            continue;
+        }
+
         if (millis() < improvBurstUntil || Serial.peek() == 'I') {
             improv.handleSerial();
             improvBurstUntil = millis() + IMPROV_BURST_MS;
             continue;
         }
         const int command = Serial.read();
-        if (command == 'a' || command == 'A') {
+        if (command == '!') {
+            collectingCommand = true;
+            commandBuffer = "";
+        } else if (command == 'a' || command == 'A') {
             auditionAllVoices();
         } else if (command == 's' || command == 'S') {
             syncFromNtp();

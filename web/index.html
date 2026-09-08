@@ -97,6 +97,65 @@
       color: var(--muted);
     }
 
+    .config {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 1.5rem;
+    }
+
+    .field {
+      margin-bottom: 1rem;
+    }
+
+    .field label {
+      display: block;
+      margin-bottom: .35rem;
+      font-size: .9rem;
+      color: var(--muted);
+    }
+
+    .field select,
+    .field input {
+      width: 100%;
+      padding: .55rem .7rem;
+      background: var(--bg);
+      color: var(--text);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      font: inherit;
+    }
+
+    .config button {
+      font: inherit;
+      font-weight: 500;
+      padding: .55rem 1.1rem;
+      border: none;
+      border-radius: 8px;
+      background: var(--accent);
+      color: #05070b;
+      cursor: pointer;
+    }
+
+    .config button[disabled] {
+      opacity: .45;
+      cursor: not-allowed;
+    }
+
+    #configLog {
+      margin-top: 1rem;
+      padding: .7rem .9rem;
+      background: var(--bg);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      font-family: ui-monospace, Consolas, monospace;
+      font-size: .85rem;
+      white-space: pre-wrap;
+      max-height: 11rem;
+      overflow-y: auto;
+      color: var(--muted);
+    }
+
     footer {
       margin-top: 3rem;
       padding-top: 1.25rem;
@@ -149,6 +208,41 @@
       Your Wi-Fi credentials are never part of the download. The published firmware contains no network details at
       all: it asks for them after installing and stores them on the device, so this page cannot see them and neither
       can anyone else who downloads the image.
+    </div>
+
+    <h2>Configure your device</h2>
+    <p>Change the title and time zone on a Stick that is already running. This talks to the device over the same USB
+      cable, so nothing is sent anywhere else.</p>
+
+    <div class="config">
+      <div class="field">
+        <label for="cfgTitle">Event title</label>
+        <input id="cfgTitle" type="text" placeholder="Launch Day" autocomplete="off">
+      </div>
+      <div class="field">
+        <label for="cfgTimezone">Time zone</label>
+        <select id="cfgTimezone"></select>
+      </div>
+      <div class="field">
+        <label for="cfgSpeaker">Speaker</label>
+        <select id="cfgSpeaker">
+          <option value="INTERNAL">Built-in buzzer</option>
+          <option value="HAT_SPK2">SPK HAT2 (I2S MAX98357)</option>
+          <option value="HAT_SPK">SPK HAT (analogue PAM8303)</option>
+          <option value="NONE">No audio</option>
+        </select>
+      </div>
+      <button id="cfgConnect" type="button">Connect to device</button>
+      <button id="cfgApply" type="button" disabled>Apply settings</button>
+      <div id="configLog" hidden></div>
+    </div>
+
+    <p>Separate multiple titles with <code>|</code> and they cycle on screen. Colour markup works too, for example
+      <code>[red]Launch[/] Day</code>.</p>
+
+    <div class="note">
+      The device stores a fixed offset from UTC and does no daylight-saving calculation of its own. This page reads the
+      offset your chosen zone is on <em>right now</em> and sends that, so re-apply it after a daylight-saving change.
     </div>
 
     <h2>Afterwards</h2>
@@ -219,6 +313,128 @@
           });
         });
       }).observe(document.body, { childList: true });
+    })();
+
+    // Device configuration over Web Serial. The firmware stores a plain UTC
+    // offset and never computes daylight saving, so the offset is resolved here
+    // where the browser's time zone database can answer it correctly.
+    (function () {
+      var titleInput = document.getElementById('cfgTitle');
+      var zoneSelect = document.getElementById('cfgTimezone');
+      var speakerSelect = document.getElementById('cfgSpeaker');
+      var connectButton = document.getElementById('cfgConnect');
+      var applyButton = document.getElementById('cfgApply');
+      var logBox = document.getElementById('configLog');
+
+      var port = null;
+      var writer = null;
+
+      function log(text) {
+        logBox.hidden = false;
+        logBox.textContent += text + '\n';
+        logBox.scrollTop = logBox.scrollHeight;
+      }
+
+      function offsetSeconds(timeZone, when) {
+        var parts = new Intl.DateTimeFormat('en-US', {
+          timeZone: timeZone,
+          timeZoneName: 'longOffset',
+        }).formatToParts(when);
+        var name = '';
+        parts.forEach(function (part) {
+          if (part.type === 'timeZoneName') { name = part.value; }
+        });
+        var match = /GMT([+-])(\d{1,2})(?::(\d{2}))?/.exec(name);
+        if (!match) { return 0; }
+        var sign = match[1] === '-' ? -1 : 1;
+        return sign * (Number(match[2]) * 3600 + Number(match[3] || 0) * 60);
+      }
+
+      function formatOffset(seconds) {
+        var sign = seconds < 0 ? '-' : '+';
+        var abs = Math.abs(seconds);
+        return 'UTC' + sign
+          + String(Math.floor(abs / 3600)).padStart(2, '0') + ':'
+          + String(Math.floor((abs % 3600) / 60)).padStart(2, '0');
+      }
+
+      function buildZoneList() {
+        var zones = typeof Intl.supportedValuesOf === 'function'
+          ? Intl.supportedValuesOf('timeZone')
+          : [];
+        var local = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        if (zones.indexOf(local) === -1) { zones = [local].concat(zones); }
+
+        var now = new Date();
+        zones
+          .map(function (zone) { return { zone: zone, offset: offsetSeconds(zone, now) }; })
+          .sort(function (a, b) { return a.offset - b.offset || a.zone.localeCompare(b.zone); })
+          .forEach(function (entry) {
+            var option = document.createElement('option');
+            option.value = String(entry.offset);
+            option.textContent = formatOffset(entry.offset) + '  ' + entry.zone.replace(/_/g, ' ');
+            option.selected = entry.zone === local;
+            zoneSelect.appendChild(option);
+          });
+      }
+
+      async function send(line) {
+        await writer.write(new TextEncoder().encode('!' + line + '\n'));
+      }
+
+      async function readReplies() {
+        var decoder = new TextDecoderStream();
+        port.readable.pipeTo(decoder.writable).catch(function () { });
+        var reader = decoder.readable.getReader();
+        var pending = '';
+        for (;;) {
+          var chunk = await reader.read();
+          if (chunk.done) { return; }
+          pending += chunk.value;
+          var lines = pending.split('\n');
+          pending = lines.pop();
+          lines.forEach(function (line) {
+            line = line.trim();
+            // The device also prints status output; only echo command replies.
+            if (line.indexOf('ok:') === 0 || line.indexOf('err:') === 0) { log(line); }
+          });
+        }
+      }
+
+      connectButton.addEventListener('click', async function () {
+        if (!('serial' in navigator)) {
+          log('This browser cannot access serial ports. Use Chrome, Edge, or Opera.');
+          return;
+        }
+        try {
+          port = await navigator.serial.requestPort();
+          await port.open({ baudRate: 115200, bufferSize: 8192 });
+          writer = port.writable.getWriter();
+          readReplies();
+          connectButton.disabled = true;
+          applyButton.disabled = false;
+          log('Connected. Reading current settings.');
+          await send('get');
+        } catch (err) {
+          log('Could not connect: ' + err.message);
+        }
+      });
+
+      applyButton.addEventListener('click', async function () {
+        applyButton.disabled = true;
+        try {
+          var title = titleInput.value.trim();
+          if (title) { await send('title ' + title); }
+          await send('tz ' + zoneSelect.value);
+          await send('speaker ' + speakerSelect.value);
+          log('Sent. Restart the device if you changed the speaker.');
+        } catch (err) {
+          log('Failed to send: ' + err.message);
+        }
+        applyButton.disabled = false;
+      });
+
+      buildZoneList();
     })();
   </script>
 </body>

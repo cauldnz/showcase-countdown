@@ -194,16 +194,23 @@ inline long utcOffsetSeconds() {
 
 // Stores the offset rather than the list position, so a stored value stays
 // correct if the table is ever reordered or extended.
-inline bool setTimezone(size_t oneBasedIndex) {
-    if (oneBasedIndex < 1 || oneBasedIndex > timezoneCount()) {
+inline bool setUtcOffsetSeconds(long seconds) {
+    if (seconds < -12 * 3600 || seconds > 14 * 3600) {
         return false;
     }
     if (!store().begin("countdown", false)) {
         return false;
     }
-    store().putLong("tz", TIMEZONES[oneBasedIndex - 1].offsetSeconds);
+    store().putLong("tz", seconds);
     store().end();
     return true;
+}
+
+inline bool setTimezone(size_t oneBasedIndex) {
+    if (oneBasedIndex < 1 || oneBasedIndex > timezoneCount()) {
+        return false;
+    }
+    return setUtcOffsetSeconds(TIMEZONES[oneBasedIndex - 1].offsetSeconds);
 }
 
 inline const char* timezoneLabel(long seconds) {

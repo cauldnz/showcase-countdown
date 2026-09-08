@@ -92,7 +92,19 @@ them in NVS. Send `w` over serial to forget them again.
 
 Build the firmware yourself if you want to change the event date, the palette,
 or the lights, since those are compile-time settings. The event title, speaker
-type, and time zone can be changed over serial without rebuilding.
+type, and time zone can be changed without rebuilding, either from the installer
+page or over serial.
+
+### Configuring from the page
+
+The installer page also has a configuration panel for a Stick that is already
+running. Connect the device, pick a title, time zone, and speaker, and apply.
+
+The time zone list matters because the firmware stores a plain offset from UTC
+and never calculates daylight saving. The page resolves your chosen zone to the
+offset it is on at that moment and sends that number, so Europe/London sends
+UTC+01:00 during British Summer Time rather than UTC+00:00. The consequence is
+that a device needs the setting re-applied after a daylight-saving transition.
 
 ## Configuring a device over serial
 
@@ -119,6 +131,22 @@ Everything set this way lives in NVS and survives a power cycle. The values in
 exactly as its build intended, and `x` returns it to that state. Changing the
 speaker restarts the device, because M5Unified selects the audio hardware during
 startup.
+
+The `z` list offers standard-time offsets only, since the device has no daylight
+saving rules of its own. Use the installer page instead if you want the offset a
+zone is actually on today.
+
+### Commands for scripts
+
+Lines beginning with `!` carry their value with them, which is how the installer
+page configures a device. Each one answers with `ok:` or `err:`.
+
+| Command | Effect |
+| --- | --- |
+| `!get` | Report the current title, speaker, and offset |
+| `!title <text>` | Set the title(s) |
+| `!tz <seconds>` | Set the UTC offset in seconds, from -43200 to 50400 |
+| `!speaker <name>` | Set the speaker type |
 
 The event date is not in this list. It is resolved to a fixed epoch at build
 time, so moving the event still means a rebuild and reflash.
