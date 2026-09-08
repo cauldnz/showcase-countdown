@@ -25,7 +25,7 @@ if $SSH "$HOST" 'test -f /etc/showcase/server.env'; then
   echo "keeping existing /etc/showcase/server.env"
 else
   $SSH "$HOST" 'cat > /etc/showcase/server.env' <<EOF
-LISTEN=:8080
+LISTEN=:8090
 EMBEDDED_BROKER=:1883
 EVENT_DATETIME=2026-09-17T14:00:00+10:00
 EVENT_NAME=[red]Westpac[/] + [#00A4EF]Microsoft[/] Hackathon
@@ -39,4 +39,4 @@ fi
 echo "== service"
 $SSH "$HOST" '/etc/init.d/showcase-server enable; /etc/init.d/showcase-server restart; sleep 2; logread -e showcase | tail -5'
 
-echo "== done: dashboard http://${HOST#*@}:8080/  MCP http://${HOST#*@}:8080/mcp/<code>  broker ${HOST#*@}:1883"
+echo "== done: dashboard http://${HOST#*@}:8090/  MCP http://${HOST#*@}:8090/mcp/<code>  broker ${HOST#*@}:1883"

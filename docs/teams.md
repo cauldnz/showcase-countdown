@@ -10,25 +10,25 @@ The four-digit number in the bottom-left of the screen is your **claim code**.
 Everyone at your table uses the same one. The MCP server is at:
 
 ```
-http://ROUTER:8080/mcp/<your code>
+http://ROUTER:8090/mcp/<your code>
 ```
 
 Claude Code:
 
 ```bash
-claude mcp add --transport http stick http://ROUTER:8080/mcp/1234
+claude mcp add --transport http stick http://ROUTER:8090/mcp/1234
 ```
 
 VS Code (`.vscode/mcp.json`):
 
 ```json
-{ "servers": { "stick": { "type": "http", "url": "http://ROUTER:8080/mcp/1234" } } }
+{ "servers": { "stick": { "type": "http", "url": "http://ROUTER:8090/mcp/1234" } } }
 ```
 
 Cursor (`.cursor/mcp.json`):
 
 ```json
-{ "mcpServers": { "stick": { "url": "http://ROUTER:8080/mcp/1234" } } }
+{ "mcpServers": { "stick": { "url": "http://ROUTER:8090/mcp/1234" } } }
 ```
 
 Then tell your agent to **claim** the stick with your team name.

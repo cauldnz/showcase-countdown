@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -69,22 +70,14 @@ func main() {
 		if _, err := startEmbeddedBroker(*embed); err != nil {
 			log.Fatalf("embedded broker: %v", err)
 		}
-		host, port, _ := strings.Cut(*embed, ":")
-		if host == "" {
-			host = "127.0.0.1"
-		}
-		*broker = "tcp://" + host + ":" + port
+		// Connect to our own broker over IPv4 loopback whatever it binds to.
+		_, port, _ := strings.Cut(*embed, ":")
+		*broker = "tcp://127.0.0.1:" + port
 		time.Sleep(200 * time.Millisecond)
 	}
 
-	if err := fleet.Connect(*broker); err != nil {
-		log.Printf("mqtt: initial connect failed: %v (retrying in background)", err)
-	}
-	if *fakeN > 0 {
-		startFakes(*broker, *fakeN)
-		log.Printf("fake fleet: %d virtual sticks", *fakeN)
-	}
-
+	// Start HTTP before the broker connection: fleet.Connect retries until it
+	// succeeds, and the dashboard must be reachable even while it does.
 	server := app.mcpServer()
 	mcpHandler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server },
 		&mcp.StreamableHTTPOptions{SessionTimeout: 30 * time.Minute})
@@ -102,9 +95,15 @@ func main() {
 	app.dashboardRoutes(mux)
 
 	srv := &http.Server{Addr: *listen, Handler: logRequests(mux)}
+	// IPv4 explicitly: on the GL-MT3000 a dual-stack socket never receives
+	// IPv4 connections, and every stick and laptop in the room is IPv4.
+	ln, err := net.Listen("tcp4", *listen)
+	if err != nil {
+		log.Fatalf("listen %s: %v", *listen, err)
+	}
 	go func() {
-		log.Printf("listening on %s  (MCP at /mcp/<code>, dashboard at /)", *listen)
-		if err := srv.ListenAndServe(); err != http.ErrServerClosed {
+		log.Printf("listening on %s  (MCP at /mcp/<code>, dashboard at /)", ln.Addr())
+		if err := srv.Serve(ln); err != http.ErrServerClosed {
 			log.Fatal(err)
 		}
 	}()
@@ -113,6 +112,14 @@ func main() {
 	}
 	if *secret == "" {
 		log.Printf("warning: no organiser secret; organiser tools are disabled")
+	}
+
+	if err := fleet.Connect(*broker); err != nil {
+		log.Printf("mqtt: initial connect failed: %v (retrying in background)", err)
+	}
+	if *fakeN > 0 {
+		startFakes(*broker, *fakeN)
+		log.Printf("fake fleet: %d virtual sticks", *fakeN)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)

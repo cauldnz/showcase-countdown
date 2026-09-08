@@ -31,7 +31,7 @@ messaging may break the fanfare.
 | 9 | Audio | Anything goes | Organiser mute is the brake. Richer audio in issue #2 |
 | 10 | Social limits | Light cooldowns | Shout 1 per 120 s per team, DM 1 per 5 s, text 120 chars |
 | 11 | Two-way | Button events and per-team inbox | `wait_for_button`, `inbox` tools |
-| 12 | Router OS | Stay on GL.iNet firmware | Vanilla OpenWrt 24.10 only if the USB-serial kmod fails |
+| 12 | Router OS | **Vanilla OpenWrt 24.10** (flashed 2026-09-08) | GL.iNet 4.7 blocks non-whitelisted ports on the router itself; see issue #1 |
 | 13 | Repo layout | Everything in this repo | `server/` for Go, `bridge/` for the ESP-NOW sketch |
 | 14 | Dashboard | Full | Fleet grid, live log, send-from-browser, organiser controls |
 | 15 | Organiser auth | Dashboard open, organiser tools need a secret | Secret from the router's env, kept in Infisical |
@@ -46,11 +46,11 @@ messaging may break the fanfare.
 team agents (Claude Code, Copilot, Cursor)  x  many people per table
         |  MCP over streamable HTTP; claim code identifies the team
         v
-Go MCP server + dashboard  (GL-MT3000, port 8080)
-        |  MQTT                                 |  serial /dev/ttyUSB0
+Go MCP server + dashboard  (GL-MT3000, port 8090)
+        |  MQTT                                 |  MQTT (showcase/bridge/cmd)
         v                                       v
-Mosquitto (GL-MT3000:1883)              ESP-NOW bridge stick (router USB)
-        |  MQTT over 2.4 GHz WiFi                |  ESP-NOW, same channel
+embedded MQTT broker (same process)      ESP-NOW bridge stick (router USB power)
+        |  MQTT over 2.4 GHz WiFi                |  MQTT in, ESP-NOW out, same channel
         v                                       v
 12 x M5StickC Plus SE  <--------------------------
 ```
@@ -120,15 +120,19 @@ Principles:
 
 - Cable on the WAN port. 2.4 GHz SSID and key match the sticks' `.env`.
   2.4 GHz channel pinned for ESP-NOW.
-- Mosquitto via opkg, anonymous on the LAN. NTP served to the LAN by sysntpd.
-  Sticks use 192.168.8.1 as their first NTP server.
-- Go binary and dashboard as a procd service, organiser secret in its env.
-- `kmod-usb-serial-ftdi` for the bridge stick. Fallback: vanilla OpenWrt.
+- Vanilla OpenWrt 24.10.3. `server/deploy/router-setup.sh` (or the first-boot
+  archive used for the flash) sets the event SSID on both bands, pins 2.4 GHz
+  to channel 6, and enables sysntpd's server. Sticks use 192.168.8.1 for NTP.
+- One Go binary as a procd service: embedded MQTT broker on 1883, MCP and
+  dashboard on 8090, organiser secret and team file in `/etc/showcase/`.
+- The bridge stick is powered from the router's USB and takes commands over
+  MQTT, so no USB-serial driver is needed.
 
 ### 4.4 ESP-NOW bridge (`bridge/`)
 
-- A stick flashed with a small sketch: reads line-delimited commands on USB
-  serial from the server, broadcasts ESP-NOW frames on the pinned channel.
+- A stick flashed with the `bridge` env: joins the event WiFi, subscribes to
+  `showcase/bridge/cmd`, and rebroadcasts each command as an ESP-NOW frame
+  on the AP's channel. USB serial is an optional second input.
   Frames: `lock`, `unlock`, `fire <epoch>`.
 
 ### 4.5 Secrets and config
@@ -169,9 +173,13 @@ Principles:
 
 ### This evening, on the AX3000
 
-5. Router audit, Mosquitto, NTP, SSID and channel, Go binary as a service.
-6. Real stick joins the router, syncs, and shows a shout sent from Claude Code.
-7. If the kmod installs: flash the bridge sketch and prove lock over ESP-NOW.
+5. ~~Router audit, broker, NTP, SSID and channel, Go binary as a service.~~
+   **Done**, after flashing vanilla OpenWrt 24.10.3 (GL's firmware blocks
+   non-whitelisted ports; details on issue #1).
+6. ~~Real stick joins the router, syncs, and shows a shout.~~ **Done** from a
+   scripted MCP client; Claude Code as the client still to try.
+7. Bridge sketch built (MQTT-driven); proving lock over ESP-NOW needs a
+   second stick.
 
 ### Before the event
 
