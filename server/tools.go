@@ -111,6 +111,11 @@ type broadcastIn struct {
 	Text    string `json:"text" jsonschema:"message for every stick"`
 	Seconds int    `json:"seconds,omitempty" jsonschema:"1-60 (default 20)"`
 }
+type broadcastAudioIn struct {
+	Jingle string `json:"jingle,omitempty" jsonschema:"a built-in jingle to play on every stick; call jingles to list them"`
+	Notes  string `json:"notes,omitempty" jsonschema:"a composed tune to play on every stick, NOTE:MS tokens like 'G5:180 C6:180 C7:500'"`
+	Volume int    `json:"volume,omitempty" jsonschema:"0-255, default leaves each stick's current volume"`
+}
 type teamIn struct {
 	Team string `json:"team" jsonschema:"team name or four-digit claim code"`
 }
@@ -392,6 +397,33 @@ func (a *App) mcpServer() *mcp.Server {
 			}
 			a.bus.Emit(Event{Kind: "organiser", Text: msg})
 			return text("Broadcast for %d s.", ttl), nil, nil
+		})
+
+	mcp.AddTool(s, &mcp.Tool{Name: "broadcast_audio", Description: "Organiser: play a jingle or a composed tune on every stick in the room at once."},
+		func(ctx context.Context, req *mcp.CallToolRequest, in broadcastAudioIn) (*mcp.CallToolResult, any, error) {
+			if err := a.organiser(req); err != nil {
+				return nil, nil, err
+			}
+			in.Jingle = strings.TrimSpace(strings.ToLower(in.Jingle))
+			in.Notes = strings.TrimSpace(in.Notes)
+			if in.Jingle == "" && in.Notes == "" {
+				return nil, nil, fmt.Errorf("give a jingle name or a notes string")
+			}
+			if in.Jingle != "" && !knownJingle(in.Jingle) {
+				return nil, nil, fmt.Errorf("unknown jingle %q; call jingles to see the list", in.Jingle)
+			}
+			if len(in.Notes) > 380 {
+				return nil, nil, fmt.Errorf("notes string is too long for one command (380 characters)")
+			}
+			if err := a.fleet.BroadcastAudio(Audio{Jingle: in.Jingle, Notes: in.Notes, Volume: in.Volume}); err != nil {
+				return nil, nil, err
+			}
+			label := in.Jingle
+			if label == "" {
+				label = "composed tune"
+			}
+			a.bus.Emit(Event{Kind: "organiser", Text: "room audio: " + label})
+			return text("Playing %s on every stick.", label), nil, nil
 		})
 
 	mcp.AddTool(s, &mcp.Tool{Name: "lock", Description: "Organiser: lock the room. Team commands are refused and sticks ignore them until unlock."},

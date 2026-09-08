@@ -522,3 +522,7 @@ func (f *Fleet) BroadcastDisplay(d Display) error {
 func (f *Fleet) BroadcastConfig(c Config) error {
 	return f.publish(topicPrefix+"all/cmd/config", c, false)
 }
+
+func (f *Fleet) BroadcastAudio(a Audio) error {
+	return f.publish(topicPrefix+"all/cmd/audio", a, false)
+}

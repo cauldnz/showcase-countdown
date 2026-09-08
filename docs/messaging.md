@@ -131,8 +131,9 @@ Team scope (any call carrying a valid claim code):
 | `inbox()` | Messages received by this team |
 | `wait_for_button(timeout_s)` | Blocks until A or B is pressed on own device |
 
-Organiser scope (calls carrying the organiser secret) adds `broadcast`, `lock`,
-`unlock`, `mute(team)`, `unmute(team)`, `unbind`, and `rename`.
+Organiser scope (calls carrying the organiser secret) adds `broadcast`,
+`broadcast_audio` (a jingle or tune on every stick), `lock`, `unlock`,
+`mute(team)`, `unmute(team)`, `unbind`, and `rename`.
 
 ## Policy (all in the MCP server)
 
