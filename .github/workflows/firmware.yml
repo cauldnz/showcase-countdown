@@ -54,14 +54,19 @@ jobs:
             exit 1
           fi
 
-      - name: Build firmware
+      - name: Build M5StickC PLUS SE firmware
         run: pio run -e stick
+
+      - name: Build M5StickS3 firmware
+        run: pio run -e sticks3
 
       - name: Assemble the installer site
         run: |
           mkdir -p site
           cp web/index.html site/
-          cp .pio/build/stick/merged-firmware.bin site/
+          cp -R web/assets site/
+          cp .pio/build/stick/merged-firmware.bin site/stick-firmware.bin
+          cp .pio/build/sticks3/merged-firmware.bin site/sticks3-firmware.bin
           sed "s/__VERSION__/${GITHUB_REF_NAME}/" web/manifest.json > site/manifest.json
 
       - uses: actions/upload-pages-artifact@v3

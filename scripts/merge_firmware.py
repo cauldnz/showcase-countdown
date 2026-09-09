@@ -10,7 +10,10 @@ import os
 
 Import("env")  # noqa: F821
 
-BOOTLOADER_OFFSET = 0x1000
+BOOTLOADER_OFFSETS = {
+    "esp32": 0x1000,
+    "esp32s3": 0x0,
+}
 PARTITIONS_OFFSET = 0x8000
 BOOT_APP0_OFFSET = 0xE000
 APPLICATION_OFFSET = 0x10000
@@ -26,9 +29,11 @@ def _boot_app0_path(env):
 def merge_firmware(source, target, env):
     build_dir = env.subst("$BUILD_DIR")
     board = env.BoardConfig()
+    mcu = board.get("build.mcu", "esp32")
+    bootloader_offset = BOOTLOADER_OFFSETS[mcu]
 
     parts = [
-        (BOOTLOADER_OFFSET, os.path.join(build_dir, "bootloader.bin")),
+        (bootloader_offset, os.path.join(build_dir, "bootloader.bin")),
         (PARTITIONS_OFFSET, os.path.join(build_dir, "partitions.bin")),
         (BOOT_APP0_OFFSET, _boot_app0_path(env)),
         (APPLICATION_OFFSET, os.path.join(build_dir, "firmware.bin")),
@@ -52,7 +57,7 @@ def merge_firmware(source, target, env):
         "$PYTHONEXE",
         '"%s"' % env.subst("$OBJCOPY"),
         "--chip",
-        board.get("build.mcu", "esp32"),
+        mcu,
         "merge_bin",
         "-o",
         '"%s"' % output,

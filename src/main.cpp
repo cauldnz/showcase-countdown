@@ -1,3 +1,7 @@
+#if __has_include(<Network.h>)
+#include <Network.h>
+#endif
+
 #include <Adafruit_NeoPixel.h>
 #include <ImprovWiFiLibrary.h>
 #include <M5Unified.h>
@@ -310,6 +314,7 @@ void printSerialHelp() {
     Serial.println("  z  set the local time zone");
     Serial.println("  a  audition all fanfare voices");
     Serial.println("  s  resync the clock from NTP");
+    Serial.println("  q  play a short speaker test tone");
     Serial.println("  t  run the speaker tone sweep");
     Serial.println("  m  run the speaker drive test");
     Serial.println("  l  toggle the Grove lights");
@@ -326,6 +331,18 @@ void printSettings() {
                   settings::timezoneLabel(offset));
     Serial.printf("  wifi    : %s\n",
                   settings::wifiConfigured() ? settings::ssid().c_str() : "NOT PROVISIONED");
+
+    const time_t now = time(nullptr);
+    Serial.printf("  clock   : %lld (%s)\n", static_cast<long long>(now),
+                  timeVerified ? "synced" : "UNVERIFIED");
+    Serial.printf("  remain  : %lld s\n",
+                  static_cast<long long>(EVENT_EPOCH_UTC - static_cast<int64_t>(now)));
+    Serial.printf("  state   : fired=%d sprite=%d diag=%d title=%u/%u\n", fired ? 1 : 0,
+                  spriteReady ? 1 : 0, showDiagnostics ? 1 : 0, static_cast<unsigned>(titleIndex),
+                  static_cast<unsigned>(titles.size()));
+    Serial.printf("  heap    : %u free, %u largest\n", static_cast<unsigned>(ESP.getFreeHeap()),
+                  static_cast<unsigned>(ESP.getMaxAllocHeap()));
+    Serial.printf("  bright  : %u\n", static_cast<unsigned>(M5.Display.getBrightness()));
 }
 
 // Commands issued by software rather than a person, so values arrive with the
@@ -915,6 +932,19 @@ void sweepTones() {
     Serial.println("sweep: done");
 }
 
+void quickTone() {
+    constexpr float TEST_HZ = 523.0f;
+    constexpr uint32_t TEST_MS = 250;
+
+    Serial.printf("tone: %.0f Hz for %lu ms\n", TEST_HZ, static_cast<unsigned long>(TEST_MS));
+    if (M5.Speaker.isEnabled()) {
+        M5.Speaker.tone(TEST_HZ, TEST_MS);
+        M5.delay(TEST_MS + 100);
+        M5.Speaker.stop();
+    }
+    Serial.println("tone: done");
+}
+
 // One cycle of a full-scale square wave, 8-bit unsigned. The default tone()
 // waveform is a sine; a square pushes a 1-bit delta-sigma buzzer much harder.
 const uint8_t SQUARE_WAVE[16] = {255, 255, 255, 255, 255, 255, 255, 255,
@@ -1073,6 +1103,31 @@ void waitForFireInstant() {
     }
 }
 
+void configureStickS3SpkHat2(bool enabled) {
+#if defined(CONFIG_IDF_TARGET_ESP32S3)
+    if (!enabled || M5.getBoard() != m5::board_t::board_M5StickS3) {
+        return;
+    }
+
+    M5.Power.setExtOutput(true);
+
+    auto speakerConfig = M5.Speaker.config();
+    speakerConfig.pin_bck = GPIO_NUM_0;
+    speakerConfig.pin_ws = GPIO_NUM_8;
+    speakerConfig.pin_data_out = GPIO_NUM_1;
+    speakerConfig.pin_mck = GPIO_NUM_NC;
+    speakerConfig.i2s_port = I2S_NUM_0;
+    speakerConfig.use_dac = false;
+    speakerConfig.buzzer = false;
+    speakerConfig.stereo = false;
+    speakerConfig.magnification = 16;
+    M5.Speaker.config(speakerConfig);
+    M5.Speaker.begin();
+#else
+    (void)enabled;
+#endif
+}
+
 }  // namespace
 
 void setup() {
@@ -1092,6 +1147,7 @@ void setup() {
     cfg.external_speaker.hat_spk = speaker.hatSpk;
     cfg.external_speaker.hat_spk2 = speaker.hatSpk2;
     M5.begin(cfg);
+    configureStickS3SpkHat2(speaker.hatSpk2);
 
     loadTitles();
 
@@ -1112,6 +1168,11 @@ void setup() {
     Serial.printf("  panel   : %dx%d\n", layout.w, layout.h);
     Serial.printf("  speaker : %s (%s)\n", M5.Speaker.isEnabled() ? "present" : "ABSENT",
                   speaker.name);
+    if (M5.Speaker.isEnabled()) {
+        const auto speakerConfig = M5.Speaker.config();
+        Serial.printf("  audio   : BCK=%d LRCLK=%d DATA=%d\n", speakerConfig.pin_bck,
+                      speakerConfig.pin_ws, speakerConfig.pin_data_out);
+    }
     Serial.printf("  event   : %s\n", plainTitle.c_str());
     Serial.printf("  titles  : %u\n", static_cast<unsigned>(titles.size()));
     Serial.printf("  target  : %lld\n", static_cast<long long>(EVENT_EPOCH_UTC));
@@ -1130,8 +1191,10 @@ void setup() {
     improv.onImprovConnected(onImprovConnected);
 
     if (M5.Speaker.isEnabled()) {
-        M5.Speaker.setVolume(255);
-        M5.Speaker.setAllChannelVolume(255);
+        const uint8_t volume =
+            M5.getBoard() == m5::board_t::board_M5StickS3 && speaker.hatSpk2 ? 128 : 255;
+        M5.Speaker.setVolume(volume);
+        M5.Speaker.setAllChannelVolume(volume);
     }
 
     // Seed from the RTC first so the countdown is live before any network
@@ -1205,6 +1268,8 @@ void loop() {
             auditionAllVoices();
         } else if (command == 's' || command == 'S') {
             syncFromNtp();
+        } else if (command == 'q' || command == 'Q') {
+            quickTone();
         } else if (command == 't' || command == 'T') {
             sweepTones();
         } else if (command == 'm' || command == 'M') {
