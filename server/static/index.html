@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Showcase sticks</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { --bg:#0f1115; --panel:#181b22; --line:#2a2f3a; --fg:#e6e8ee; --dim:#8b93a7; --ok:#3ddc84; --bad:#ff5d5d; --warn:#ffb03b; --accent:#4cc9f0; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.4 system-ui, Segoe UI, Roboto, sans-serif; }
+  header { display:flex; gap:16px; align-items:center; padding:10px 16px; border-bottom:1px solid var(--line); background:var(--panel); position:sticky; top:0; z-index:2; }
+  header h1 { font-size:16px; margin:0; font-weight:600; }
+  header .status { color:var(--dim); }
+  header .pill { padding:2px 8px; border-radius:999px; border:1px solid var(--line); font-size:12px; }
+  .pill.on { border-color:var(--ok); color:var(--ok); } .pill.off { border-color:var(--bad); color:var(--bad); } .pill.lock { border-color:var(--warn); color:var(--warn); }
+  main { display:grid; grid-template-columns: 1fr 360px; gap:16px; padding:16px; }
+  @media (max-width: 1000px) { main { grid-template-columns: 1fr; } }
+  .grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(268px, 1fr)); gap:12px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:8px; }
+  .card.offline { opacity:.55; }
+  .card .top { display:flex; justify-content:space-between; align-items:baseline; margin-bottom:6px; font-size:12px; color:var(--dim); }
+  .card .top b { color:var(--fg); font-size:13px; }
+  canvas { width:100%; aspect-ratio: 240/135; background:#000; border-radius:4px; display:block; image-rendering: pixelated; }
+  .card .meta { display:flex; gap:8px; flex-wrap:wrap; margin-top:6px; font-size:12px; color:var(--dim); }
+  .card .meta .led { width:12px; height:12px; border-radius:50%; display:inline-block; vertical-align:middle; border:1px solid var(--line); }
+  .card .actions { display:flex; gap:6px; margin-top:6px; }
+  button, input, select, textarea { font:inherit; background:#0f1115; color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:6px 8px; }
+  button { cursor:pointer; } button:hover { border-color:var(--accent); }
+  button.small { padding:2px 8px; font-size:12px; }
+  aside { display:flex; flex-direction:column; gap:12px; }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:10px; }
+  .panel h2 { font-size:13px; margin:0 0 8px; color:var(--dim); text-transform:uppercase; letter-spacing:.04em; }
+  .row { display:flex; gap:6px; margin-bottom:6px; } .row > * { flex:1; min-width:0; }
+  #log { height:360px; overflow:auto; font:12px/1.5 ui-monospace, Consolas, monospace; }
+  #log div { border-bottom:1px solid #1f232c; padding:2px 0; white-space:pre-wrap; }
+  #log .k { color:var(--dim); } #log .shout { color:var(--warn); } #log .dm { color:#ffd166; } #log .organiser, #log .lock { color:#ff7ad9; } #log .presence { color:var(--accent); } #log .error { color:var(--bad); }
+  .hint { color:var(--dim); font-size:12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1 id="title">Showcase sticks</h1>
+  <span class="status" id="countdown"></span>
+  <span class="pill" id="broker">broker</span>
+  <span class="pill" id="lock">unlocked</span>
+  <span class="status" id="count"></span>
+</header>
+<main>
+  <section>
+    <div class="grid" id="grid"></div>
+  </section>
+  <aside>
+    <div class="panel">
+      <h2>Send</h2>
+      <div class="row"><input id="s-code" placeholder="claim code (as a team)"><input id="s-secret" placeholder="organiser secret" type="password"></div>
+      <div class="row"><select id="s-target"><option value="self">own stick</option><option value="all">all sticks</option></select><select id="s-kind"><option value="display">display</option><option value="audio">audio</option><option value="led">led</option></select></div>
+      <div class="row" id="f-display"><input id="s-text" placeholder="text, [red]markup[/] ok"><input id="s-seconds" type="number" placeholder="secs" style="max-width:70px"></div>
+      <div class="row" id="f-audio" hidden><select id="s-jingle"><option value="">composed…</option></select><input id="s-notes" placeholder="C5:200 E5:200 G5:400"></div>
+      <div class="row" id="f-led" hidden><input id="s-color" type="color" value="#ff6600"><select id="s-mode"><option>solid</option><option>blink</option><option>breathe</option><option>off</option></select></div>
+      <div class="row"><button id="s-go">Send</button></div>
+      <div class="hint" id="s-result"></div>
+    </div>
+    <div class="panel">
+      <h2>Organiser</h2>
+      <div class="row"><button id="o-lock">Lock room</button><button id="o-unlock">Unlock</button></div>
+      <div class="row"><input id="o-team" placeholder="team or code"><button id="o-mute" class="small">Mute</button><button id="o-unmute" class="small">Unmute</button></div>
+      <div class="hint">Uses the organiser secret from the Send panel.</div>
+    </div>
+    <div class="panel">
+      <h2>Live log</h2>
+      <div id="log"></div>
+    </div>
+  </aside>
+</main>
+<script>
+const W = 240, H = 135;
+let fleet = { devices: [] };
+const jingles = ["ding","tada","merge","coin","levelup","alarm","sad","fail","knock","ok"];
+for (const j of jingles) { const o = document.createElement('option'); o.value = o.textContent = j; document.getElementById('s-jingle').appendChild(o); }
+
+// ---- rendering: approximates the firmware's layout from the same JSON ----
+const NAMED = { red:'#f00', green:'#0f0', blue:'#00f', yellow:'#ff0', cyan:'#0ff', magenta:'#f0f', white:'#fff', orange:'#ffa500', grey:'#888', gray:'#888', skyblue:'#87ceeb', pink:'#ffc0cb' };
+function markupRuns(text) {
+  const runs = []; let colour = '#fff'; let i = 0; let buf = '';
+  while (i < text.length) {
+    if (text[i] === '[') {
+      const close = text.indexOf(']', i);
+      if (close > i) {
+        const tag = text.slice(i + 1, close);
+        let c = null;
+        if (tag === '/') c = '#fff'; else if (/^#[0-9a-f]{6}$/i.test(tag)) c = tag; else if (NAMED[tag.toLowerCase()]) c = NAMED[tag.toLowerCase()];
+        if (c) { if (buf) runs.push({ t: buf, c: colour }); buf = ''; colour = c; i = close + 1; continue; }
+      }
+    }
+    buf += text[i++];
+  }
+  if (buf) runs.push({ t: buf, c: colour });
+  return runs;
+}
+function drawRuns(ctx, runs, x, y, font) {
+  ctx.font = font; ctx.textBaseline = 'top';
+  for (const r of runs) { ctx.fillStyle = r.c; ctx.fillText(r.t, x, y); x += ctx.measureText(r.t).width; }
+  return x;
+}
+function runsWidth(ctx, runs, font) { ctx.font = font; return runs.reduce((w, r) => w + ctx.measureText(r.t).width, 0); }
+function marquee(ctx, runs, y, font, tMs) {
+  const w = runsWidth(ctx, runs, font);
+  if (w <= W - 4) { drawRuns(ctx, runs, (W - w) / 2, y, font); return; }
+  const span = w + 24; const shift = Math.floor(tMs / 15) % span;
+  ctx.save(); ctx.beginPath(); ctx.rect(2, y - 2, W - 4, 24); ctx.clip();
+  drawRuns(ctx, runs, 2 - shift, y, font); drawRuns(ctx, runs, 2 - shift + span, y, font);
+  ctx.restore();
+}
+function remainingParts(sec) {
+  if (sec < 0) sec = 0;
+  const d = Math.floor(sec / 86400), h = Math.floor(sec % 86400 / 3600), m = Math.floor(sec % 3600 / 60), s = Math.floor(sec % 60);
+  if (d > 0) return [[d, d === 1 ? 'DAY' : 'DAYS'], [h, h === 1 ? 'HR' : 'HRS']];
+  if (h > 0) return [[h, h === 1 ? 'HR' : 'HRS'], [m, m === 1 ? 'MIN' : 'MINS']];
+  return [[m, m === 1 ? 'MIN' : 'MINS'], [s, s === 1 ? 'SEC' : 'SECS']];
+}
+function drawStrip(ctx, d) {
+  ctx.font = '11px monospace'; ctx.textBaseline = 'top';
+  ctx.fillStyle = '#c0c0c0'; ctx.fillText(String(d.code || 0).padStart(4, '0'), 4, H - 13);
+  ctx.fillStyle = d.online ? '#3ddc84' : '#ff5d5d'; ctx.beginPath(); ctx.arc(W / 2, H - 7, 3, 0, Math.PI * 2); ctx.fill();
+  if (d.team) { ctx.fillStyle = '#c0c0c0'; const w = ctx.measureText(d.team).width; ctx.fillText(d.team, W - 4 - w, H - 13); }
+}
+function drawDevice(canvas, d, now) {
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
+  const screen = d.screen && new Date(d.screen.until) > now ? d.screen : null;
+  if (screen) {
+    const kind = screen.kind || 'self';
+    const accent = { dm: '#ff0', shout: '#ffa500', organiser: '#f0f' }[kind] || '#0ff';
+    const header = kind === 'dm' ? `${screen.from} to you` : kind === 'shout' ? `${screen.from} shouts` : kind === 'organiser' ? 'ORGANISER' : (d.team || 'message');
+    ctx.font = '12px sans-serif'; ctx.textBaseline = 'top'; ctx.fillStyle = accent; ctx.fillText(header, 4, 2);
+    ctx.fillStyle = accent; ctx.fillRect(4, 18, W - 8, 1);
+    const started = new Date(screen.until).getTime() - screen.ttl_s * 1000;
+    marquee(ctx, markupRuns(screen.text), 60, 'bold 17px sans-serif', now.getTime() - started);
+  } else {
+    const titleRuns = markupRuns(fleet.title || 'Countdown');
+    marquee(ctx, titleRuns, 2, 'bold 16px sans-serif', now.getTime());
+    ctx.fillStyle = '#555'; ctx.fillRect(6, 25, W - 12, 1);
+    const target = fleet.event_epoch ? new Date(fleet.event_epoch).getTime() / 1000 : 0;
+    const parts = remainingParts(target ? target - now.getTime() / 1000 : 0);
+    ctx.textAlign = 'center';
+    parts.forEach(([v, label], i) => {
+      const cx = W / 4 + i * (W / 2);
+      ctx.font = 'bold 44px monospace'; ctx.fillStyle = '#fff'; ctx.textBaseline = 'top'; ctx.fillText(String(v), cx, 34);
+      ctx.font = '18px sans-serif'; ctx.fillStyle = '#0ff'; ctx.fillText(label, cx, 84);
+    });
+    ctx.textAlign = 'left';
+  }
+  drawStrip(ctx, d);
+}
+
+// ---- fleet grid ----
+const cards = new Map();
+function card(d) {
+  let c = cards.get(d.id);
+  if (!c) {
+    c = document.createElement('div'); c.className = 'card';
+    c.innerHTML = `<div class="top"><b class="name"></b><span class="id"></span></div><canvas width="${W}" height="${H}"></canvas><div class="meta"></div><div class="actions"></div>`;
+    document.getElementById('grid').appendChild(c); cards.set(d.id, c);
+    if (d.virtual) {
+      const a = c.querySelector('.actions');
+      for (const [b, act, label] of [['A', 'click', 'A click'], ['A', 'double', 'A double'], ['B', 'press', 'B press']]) {
+        const btn = document.createElement('button'); btn.className = 'small'; btn.textContent = label;
+        btn.onclick = () => fetch(`/api/fake/${d.id}/button?b=${b}&action=${act}`, { method: 'POST' });
+        a.appendChild(btn);
+      }
+    }
+  }
+  return c;
+}
+function render() {
+  const now = new Date();
+  for (const d of fleet.devices) {
+    const c = card(d);
+    c.classList.toggle('offline', !d.online);
+    c.querySelector('.name').textContent = d.team || `Table ${String(d.code).padStart(4, '0')}`;
+    c.querySelector('.id').textContent = (d.virtual ? 'virtual ' : '') + d.id;
+    const led = d.led && new Date(d.led.until) > now ? d.led : null;
+    const ledCol = led ? (led.mode === 'off' ? '#000' : led.color) : '#222';
+    const muted = (fleet.muted || []).includes(d.id);
+    c.querySelector('.meta').innerHTML = `<span class="led" style="background:${ledCol}"></span>` +
+      `<span>${d.voice || '–'}</span><span>${d.battery ?? '–'}%</span><span>${d.ntp ? 'ntp' : 'no ntp'}</span>` +
+      (d.heap ? `<span>${Math.round(d.heap / 1024)}k heap</span>` : '') + (muted ? `<span style="color:var(--bad)">muted</span>` : '') +
+      (d.audio && (now - new Date(d.audio.at)) < 8000 ? `<span style="color:var(--warn)">♪ ${d.audio.label}</span>` : '');
+    drawDevice(c.querySelector('canvas'), d, now);
+  }
+  const online = fleet.devices.filter(d => d.online).length;
+  document.getElementById('count').textContent = `${online}/${fleet.devices.length} online`;
+  document.getElementById('broker').className = 'pill ' + (fleet.broker ? 'on' : 'off');
+  document.getElementById('broker').textContent = fleet.broker ? 'broker ok' : 'broker down';
+  const lock = document.getElementById('lock');
+  const locked = fleet.manual_lock || fleet.auto_lock;
+  lock.className = 'pill ' + (locked ? 'lock' : ''); lock.textContent = locked ? (fleet.manual_lock ? 'locked (organiser)' : 'locked (finale)') : 'unlocked';
+  if (fleet.event_epoch) {
+    const s = Math.max(0, (new Date(fleet.event_epoch) - now) / 1000);
+    const p = remainingParts(s);
+    document.getElementById('countdown').textContent = `${p[0][0]} ${p[0][1].toLowerCase()} ${p[1][0]} ${p[1][1].toLowerCase()}`;
+  }
+}
+async function refresh() {
+  try { fleet = await (await fetch('/api/fleet')).json(); document.getElementById('title').textContent = (fleet.title || 'Showcase').replace(/\[[^\]]*\]/g, ''); } catch (e) {}
+}
+setInterval(refresh, 2000); refresh();
+setInterval(render, 40);
+
+// ---- log ----
+const log = document.getElementById('log');
+function addLog(e) {
+  const div = document.createElement('div'); div.className = e.kind;
+  const t = new Date(e.at).toLocaleTimeString();
+  div.innerHTML = `<span class="k">${t} ${e.kind}</span> ${e.team ? '<b>' + esc(e.team) + '</b> ' : ''}${e.device && !e.team ? esc(e.device) + ' ' : ''}${esc(e.text)}`;
+  log.appendChild(div); while (log.children.length > 300) log.removeChild(log.firstChild);
+  log.scrollTop = log.scrollHeight;
+}
+function esc(s) { return String(s ?? '').replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }
+function connectEvents() {
+  const es = new EventSource('/api/events');
+  es.onmessage = ev => { addLog(JSON.parse(ev.data)); refresh(); };
+  es.onerror = () => { es.close(); setTimeout(connectEvents, 2000); };
+}
+connectEvents();
+
+// ---- send + organiser ----
+const $ = id => document.getElementById(id);
+$('s-kind').onchange = () => { for (const k of ['display', 'audio', 'led']) $('f-' + k).hidden = $('s-kind').value !== k; };
+$('s-go').onclick = async () => {
+  const body = { code: $('s-code').value, secret: $('s-secret').value, target: $('s-target').value, kind: $('s-kind').value,
+    text: $('s-text').value, seconds: +$('s-seconds').value || 0, jingle: $('s-jingle').value, notes: $('s-notes').value, color: $('s-color').value, mode: $('s-mode').value };
+  const r = await fetch('/api/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  $('s-result').textContent = r.ok ? 'sent' : `${r.status}: ${await r.text()}`;
+};
+async function organiser(action, team) {
+  const r = await fetch(`/api/organiser/${action}?team=${encodeURIComponent(team || '')}`, { method: 'POST', headers: { 'X-Organiser-Secret': $('s-secret').value } });
+  $('s-result').textContent = r.ok ? action + ' ok' : `${r.status}: ${await r.text()}`;
+  refresh();
+}
+$('o-lock').onclick = () => organiser('lock'); $('o-unlock').onclick = () => organiser('unlock');
+$('o-mute').onclick = () => organiser('mute', $('o-team').value); $('o-unmute').onclick = () => organiser('unmute', $('o-team').value);
+</script>
+</body>
+</html>

@@ -290,15 +290,48 @@ Run the deterministic schedule checks with:
 python tests/test_light_schedule.py
 ```
 
+## Room messaging
+
+With `MQTT_HOST` set in `.env`, each unit keeps WiFi up after the time sync and
+joins an MQTT broker. Teams then drive their own stick from their coding agents
+through an MCP server: messages, jingles and composed tunes, LED patterns,
+shouts to the room, and messages to other tables. The four-digit claim code
+shown under the countdown is the team's credential. Messaging is off when
+`MQTT_HOST` is empty, so a published, Improv-provisioned image is unaffected.
+
+| Doc | What it covers |
+| --- | --- |
+| [docs/plan.md](docs/plan.md) | The decisions, architecture and schedule |
+| [docs/messaging.md](docs/messaging.md) | MQTT topics, payloads and the tool list |
+| [docs/teams.md](docs/teams.md) | The one-page handout for tables |
+| [server/](server/) | The Go MCP server, dashboard, fake fleet, and router deploy |
+
+The server, broker, LAN NTP and dashboard run as one Go binary on an
+**OpenWrt** router (tested only on a GL-MT3000, `aarch64`, OpenWrt 24.10). Run
+it locally against any broker, with a dozen virtual sticks:
+
+```sh
+cd server && go build -o showcase-server . && \
+  EVENT_DATETIME="2026-11-15T09:00:00+11:00" ORGANISER_SECRET=secret \
+  ./showcase-server -embedded-broker :1883 -fake 12
+```
+
+Dashboard at `http://localhost:8090/`, MCP at `http://localhost:8090/mcp/<code>`.
+
 ## Layout
 
 ```text
-platformio.ini              Build environments
+platformio.ini              Build environments (stick, bridge, sticks3)
 scripts/load_env.py         .env -> generated env_config.h (pre-build)
 scripts/merge_firmware.py   Single flashable image for the web installer
 scripts/read_serial.py      One-shot serial capture, for scripted checks
-src/main.cpp                Boot sequence, display, countdown
+src/main.cpp                Boot sequence, display, countdown, messaging
 src/settings.h              Runtime settings in NVS, provisioned over serial
+src/messaging.cpp           MQTT session, commands in, state and events out
+src/sequencer.h             Note-string parser for team audio
+src/espnow_link.cpp         ESP-NOW receiver for the lock and fire signals
+src/bridge/                 The ESP-NOW bridge sketch (env: bridge)
+server/                     Go MCP server, dashboard, fake fleet, deploy
 web/                        Browser installer page and manifest
 .env.template               Committed structure documentation
 .env.public                 Credential-free config for the published build

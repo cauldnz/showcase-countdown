@@ -45,6 +45,17 @@ DEFAULTS = {
     "LED_OFF_TIME": '"18:00"',
     "TITLE_DWELL_MS": "5000",
     "TITLE_GAP_MS": "300",
+    # Room messaging (see docs/messaging.md). Off unless a broker is named, so
+    # a published image keeps the original behaviour: the radio powers off
+    # after the NTP sync and no MQTT client is started.
+    "MQTT_HOST": '""',
+    "MQTT_PORT": "1883",
+    # Mixed into the on-screen claim code so it cannot be derived from the
+    # device id printed in the boot banner.
+    "CLAIM_SALT": '"showcase"',
+    # 2.4 GHz channel the event AP is pinned to; ESP-NOW frames from the bridge
+    # are sent on it and unassociated sticks park their radio there.
+    "ESPNOW_CHANNEL": "6",
 }
 
 _LINE = re.compile(r"^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$")
@@ -234,7 +245,8 @@ def render(entries, epoch, parsed):
         fail("LED_TYPE=%r must be one of: %s" % (led_type, ", ".join(sorted(_LED_TYPES))))
     type_enabled, pixel_order, pixel_speed = _LED_TYPES[led_type]
     led_enabled = 1 if type_enabled and boolean_setting(entries, "LED_ENABLED") else 0
-    led_count = integer_setting(entries, "LED_COUNT", (1, 2))
+    # Up to a small ring or jewel. Watch the Grove 5 V budget above ~8 pixels.
+    led_count = integer_range_setting(entries, "LED_COUNT", 1, 16)
     led_pin = integer_setting(entries, "LED_PIN", (32, 33))
     led_brightness = integer_range_setting(entries, "LED_BRIGHTNESS", 1, 255)
     led_on_minute = minute_of_day(entries, "LED_ON_TIME")
