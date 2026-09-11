@@ -56,7 +56,7 @@ func (f *fakeStick) run(brokerURL string) {
 	stateTopic := f.stateTopic()
 	opts := mqtt.NewClientOptions().
 		AddBroker(brokerURL).
-		SetClientID("stick-" + f.id).
+		SetClientID("stick-"+f.id).
 		SetAutoReconnect(true).
 		SetConnectRetry(true).
 		SetWill(stateTopic, `{"online":false}`, 1, true)

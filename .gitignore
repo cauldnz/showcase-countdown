@@ -16,6 +16,7 @@ __pycache__/
 .env
 .env.*
 !.env.template
+!.env.public
 
 # Ignore the tmp folder, but keep the .keep file to make sure the folder is created on clone
 tmp/*
@@ -24,4 +25,6 @@ tmp/*
 # Go server build output
 server/showcase-server
 server/showcase-server.exe
+server/showcase-server.exe~
+server/*.exe~
 server/dist/

@@ -1,0 +1,84 @@
+name: Publish firmware
+
+# Builds the credential-free firmware and deploys the browser installer to
+# GitHub Pages. Runs on a version tag so the published image always corresponds
+# to a specific commit.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio/.cache
+            ~/.cache/pip
+          key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
+          restore-keys: pio-${{ runner.os }}-
+
+      - name: Install PlatformIO
+        run: pip install --upgrade platformio
+
+      - name: Select the public build configuration
+        run: |
+          cp .env.public .env
+          printf 'FIRMWARE_VERSION="%s"\n' "${GITHUB_REF_NAME}" >> .env
+
+      # The published image is world-readable, so a stray credential in
+      # .env.public would be a disclosure. Fail before anything is built.
+      - name: Refuse to publish credentials
+        run: |
+          if grep -Eq '^[[:space:]]*(export[[:space:]]+)?WIFI_(SSID|PASSWORD)[[:space:]]*=[[:space:]]*("[^"]+"|'"'"'[^'"'"']+'"'"'|[^"'"'"'[:space:]]+)' .env; then
+            echo "::error file=.env.public::Wi-Fi credentials present in the public build configuration"
+            exit 1
+          fi
+
+      - name: Build M5StickC PLUS SE firmware
+        run: pio run -e stick
+
+      - name: Build M5StickS3 firmware
+        run: pio run -e sticks3
+
+      - name: Assemble the installer site
+        run: |
+          mkdir -p site
+          cp web/index.html site/
+          cp -R web/assets site/
+          cp .pio/build/stick/merged-firmware.bin site/stick-firmware.bin
+          cp .pio/build/sticks3/merged-firmware.bin site/sticks3-firmware.bin
+          sed "s/__VERSION__/${GITHUB_REF_NAME}/" web/manifest.json > site/manifest.json
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

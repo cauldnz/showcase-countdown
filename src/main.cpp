@@ -1,4 +1,9 @@
+#if __has_include(<Network.h>)
+#include <Network.h>
+#endif
+
 #include <Adafruit_NeoPixel.h>
+#include <ImprovWiFiLibrary.h>
 #include <M5Unified.h>
 #include <WiFi.h>
 
@@ -12,18 +17,17 @@
 
 #include <string.h>
 
+#include <vector>
+
 #include "env_config.h"
 #include "espnow_link.h"
 #include "fanfare.h"
-#include "light_schedule.h"
 #include "jingles.h"
+#include "light_schedule.h"
 #include "messaging.h"
 #include "sequencer.h"
+#include "settings.h"
 #include "voice_assign.h"
-
-#ifndef WIFI_SSID
-#error "WIFI_SSID missing - copy .env.template to .env"
-#endif
 
 namespace {
 
@@ -36,9 +40,9 @@ constexpr int64_t PRE_EVENT_SYNC_LEAD_S = 5 * 60;
 // wall clock is more robust than SNTP status values across core versions.
 constexpr time_t SANE_EPOCH = 1750000000;  // 2025-06-15
 
-const char* const TITLES[] = EVENT_TITLES;
-constexpr size_t TITLE_COUNT = EVENT_TITLE_COUNT;
-
+// Replaceable over serial, so the set is parsed at boot rather than baked in.
+std::vector<String> titles;
+String plainTitle;
 constexpr uint32_t MARQUEE_MS_PER_PX = 15;  // ~65 px/sec
 constexpr int MARQUEE_GAP = 24;             // blank run between wrapped copies
 constexpr uint32_t MARQUEE_MIN_LOOPS = 2;
@@ -129,6 +133,49 @@ bool parseColourTag(const char* p, const char** afterTag, uint16_t* colour) {
     return false;
 }
 
+// Only tags the renderer would consume are removed, so a typo survives here for
+// the same reason it survives on screen.
+String stripMarkup(const String& text) {
+    String out;
+    for (const char* p = text.c_str(); *p != '\0';) {
+        const char* afterTag = nullptr;
+        uint16_t ignored = TITLE_DEFAULT_COLOUR;
+        if (parseColourTag(p, &afterTag, &ignored)) {
+            p = afterTag;
+            continue;
+        }
+        out += *p++;
+    }
+    out.trim();
+    return out;
+}
+
+void loadTitles() {
+    const String raw = settings::eventTitles();
+    titles.clear();
+
+    int start = 0;
+    while (start <= static_cast<int>(raw.length())) {
+        int bar = raw.indexOf('|', start);
+        if (bar < 0) {
+            bar = static_cast<int>(raw.length());
+        }
+        String part = raw.substring(start, bar);
+        part.trim();
+        if (part.length() > 0) {
+            titles.push_back(part);
+        }
+        start = bar + 1;
+    }
+    if (titles.empty()) {
+        titles.push_back(String("Countdown"));
+    }
+
+    plainTitle = stripMarkup(titles[0]);
+    titleIndex = 0;
+    titleStartMs = millis();
+}
+
 // Measures when draw is false, renders when true. One implementation so the
 // marquee's width can never disagree with what is actually drawn.
 int renderTitleMarkup(LovyanGFX* g, const char* text, int x, int y, bool draw) {
@@ -206,7 +253,69 @@ bool lightScheduleInitialized = false;
 bool lastScheduledLightsOn = false;
 
 // ---------------------------------------------------------------------------
-// Messaging state (docs/messaging.md)
+// Grove lights
+// ---------------------------------------------------------------------------
+
+void setLights(bool on, const char* source) {
+    if (!LED_ENABLED) {
+        return;
+    }
+
+    lightsOn = on;
+    const uint32_t colour = on ? lights.Color(LED_BRIGHTNESS, LED_BRIGHTNESS, LED_BRIGHTNESS) : 0;
+    for (uint16_t index = 0; index < LED_COUNT; ++index) {
+        lights.setPixelColor(index, colour);
+    }
+    lights.show();
+    Serial.printf("  leds    : %s (%s)\n", on ? "on" : "off", source);
+}
+
+void updateLightSchedule(time_t now) {
+    if (!LED_ENABLED || now <= SANE_EPOCH) {
+        return;
+    }
+
+    const bool scheduledOn = light_schedule::isOnAt(
+        static_cast<int64_t>(now), settings::utcOffsetSeconds(), LED_ON_MINUTE_OF_DAY,
+        LED_OFF_MINUTE_OF_DAY);
+    if (!lightScheduleInitialized || scheduledOn != lastScheduledLightsOn) {
+        lightScheduleInitialized = true;
+        lastScheduledLightsOn = scheduledOn;
+        setLights(scheduledOn, "schedule");
+    }
+}
+
+void initializeLights() {
+    if (!LED_ENABLED) {
+        Serial.println("  leds    : disabled");
+        return;
+    }
+
+    M5.Power.setExtOutput(true);
+    Serial.printf("  grove 5v: %s\n", M5.Power.getExtOutput() ? "on" : "FAILED");
+    lights.begin();
+    lights.clear();
+    lights.show();
+    Serial.printf("  leds    : %u x %s on GPIO %d\n", static_cast<unsigned>(LED_COUNT),
+                  LED_TYPE_NAME, LED_PIN);
+    updateLightSchedule(time(nullptr));
+}
+
+void toggleLights(const char* source) {
+    if (!LED_ENABLED) {
+        Serial.println("  leds    : toggle ignored (disabled)");
+        return;
+    }
+    setLights(!lightsOn, source);
+}
+
+// ---------------------------------------------------------------------------
+// Room messaging (docs/messaging.md)
+//
+// With MQTT_HOST set, the unit keeps WiFi up after the sync and holds an MQTT
+// session: it shows overlaid messages, plays audio, drives the LED, and
+// publishes its state and button presses. All rendering stays on the loop
+// task; the MQTT client only queues commands.
 // ---------------------------------------------------------------------------
 
 constexpr uint32_t STATE_PUBLISH_MS = 10000;
@@ -256,6 +365,16 @@ const char* kindName(messaging::Kind kind) {
     }
 }
 
+// True once the fanfare is close enough that nothing may risk delaying it.
+// Publishing blocks on the MQTT client lock, which can stall for the network
+// timeout on a half-open socket, so it stops well before the fire instant.
+bool nearFanfare() {
+    const int64_t remaining =
+        static_cast<int64_t>(EVENT_EPOCH_UTC) - static_cast<int64_t>(time(nullptr));
+    const int64_t fanfareS = fanfare::DURATION_MS / 1000;
+    return remaining <= LOCK_LEAD_S && remaining > -fanfareS;
+}
+
 bool roomLockedNow() {
     if (roomLocked) {
         return true;
@@ -272,7 +391,7 @@ void onDisplayCommand(const messaging::Display& d) {
         Serial.println("  overlay : dropped, room locked");
         return;
     }
-    const bool current = overlay.active && millis() < overlay.untilMs;
+    const bool current = overlay.active && static_cast<int32_t>(millis() - overlay.untilMs) < 0;
     if (current && !organiser && d.priority < overlay.priority) {
         Serial.println("  overlay : dropped, lower priority");
         return;
@@ -450,73 +569,224 @@ void onConfigCommand(const messaging::Config& c) {
                   static_cast<unsigned>(c.brightness), roomLocked ? "yes" : "no");
 }
 
-
-// ---------------------------------------------------------------------------
-// Grove lights
-// ---------------------------------------------------------------------------
-
-void setLights(bool on, const char* source) {
-    if (!LED_ENABLED) {
-        return;
-    }
-
-    lightsOn = on;
-    const uint32_t colour = on ? lights.Color(LED_BRIGHTNESS, LED_BRIGHTNESS, LED_BRIGHTNESS) : 0;
-    for (uint16_t index = 0; index < LED_COUNT; ++index) {
-        lights.setPixelColor(index, colour);
-    }
-    lights.show();
-    Serial.printf("  leds    : %s (%s)\n", on ? "on" : "off", source);
-}
-
-void updateLightSchedule(time_t now) {
-    if (!LED_ENABLED || now <= SANE_EPOCH) {
-        return;
-    }
-
-    const bool scheduledOn = light_schedule::isOnAt(
-        static_cast<int64_t>(now), LOCAL_UTC_OFFSET_SECONDS, LED_ON_MINUTE_OF_DAY,
-        LED_OFF_MINUTE_OF_DAY);
-    if (!lightScheduleInitialized || scheduledOn != lastScheduledLightsOn) {
-        lightScheduleInitialized = true;
-        lastScheduledLightsOn = scheduledOn;
-        setLights(scheduledOn, "schedule");
-    }
-}
-
-void initializeLights() {
-    if (!LED_ENABLED) {
-        Serial.println("  leds    : disabled");
-        return;
-    }
-
-    M5.Power.setExtOutput(true);
-    Serial.printf("  grove 5v: %s\n", M5.Power.getExtOutput() ? "on" : "FAILED");
-    lights.begin();
-    lights.clear();
-    lights.show();
-    Serial.printf("  leds    : %u x %s on GPIO %d\n", static_cast<unsigned>(LED_COUNT),
-                  LED_TYPE_NAME, LED_PIN);
-    updateLightSchedule(time(nullptr));
-}
-
-void toggleLights(const char* source) {
-    if (!LED_ENABLED) {
-        Serial.println("  leds    : toggle ignored (disabled)");
-        return;
-    }
-    setLights(!lightsOn, source);
-}
-
 void printSerialHelp() {
     Serial.println("serial commands:");
     Serial.println("  ?  show this help menu");
+    Serial.println("  i  show the current settings");
+    Serial.println("  e  set the event title(s)");
+    Serial.println("  p  set the speaker type");
+    Serial.println("  z  set the local time zone");
     Serial.println("  a  audition all fanfare voices");
     Serial.println("  s  resync the clock from NTP");
+    Serial.println("  q  play a short speaker test tone");
     Serial.println("  t  run the speaker tone sweep");
     Serial.println("  m  run the speaker drive test");
     Serial.println("  l  toggle the Grove lights");
     Serial.println("  j  play the 'tada' jingle through the sequencer");
+    Serial.println("  w  forget the stored Wi-Fi credentials");
+    Serial.println("  x  reset settings to the built-in defaults");
+}
+
+void printSettings() {
+    const long offset = settings::utcOffsetSeconds();
+    Serial.println("current settings:");
+    Serial.printf("  titles  : %s\n", settings::eventTitles().c_str());
+    Serial.printf("  speaker : %s\n", settings::speakerName().c_str());
+    Serial.printf("  timezone: UTC%s (%s)\n", settings::formatUtcOffset(offset).c_str(),
+                  settings::timezoneLabel(offset));
+    Serial.printf("  wifi    : %s\n",
+                  settings::wifiConfigured() ? settings::ssid().c_str() : "NOT PROVISIONED");
+
+    const time_t now = time(nullptr);
+    Serial.printf("  clock   : %lld (%s)\n", static_cast<long long>(now),
+                  timeVerified ? "synced" : "UNVERIFIED");
+    Serial.printf("  remain  : %lld s\n",
+                  static_cast<long long>(EVENT_EPOCH_UTC - static_cast<int64_t>(now)));
+    Serial.printf("  state   : fired=%d sprite=%d diag=%d title=%u/%u\n", fired ? 1 : 0,
+                  spriteReady ? 1 : 0, showDiagnostics ? 1 : 0, static_cast<unsigned>(titleIndex),
+                  static_cast<unsigned>(titles.size()));
+    Serial.printf("  heap    : %u free, %u largest\n", static_cast<unsigned>(ESP.getFreeHeap()),
+                  static_cast<unsigned>(ESP.getMaxAllocHeap()));
+    Serial.printf("  bright  : %u\n", static_cast<unsigned>(M5.Display.getBrightness()));
+}
+
+// Commands issued by software rather than a person, so values arrive with the
+// command instead of through a prompt. Every reply starts ok: or err: so the
+// caller can tell the outcome without parsing prose.
+String commandBuffer;
+bool collectingCommand = false;
+
+bool parseLong(const String& text, long* value) {
+    if (text.length() == 0) {
+        return false;
+    }
+    for (size_t i = 0; i < text.length(); ++i) {
+        const char c = text[i];
+        if (!isdigit(c) && !(i == 0 && (c == '-' || c == '+'))) {
+            return false;
+        }
+    }
+    *value = text.toInt();
+    return true;
+}
+
+void handleMachineCommand(const String& line) {
+    const int space = line.indexOf(' ');
+    const String verb = space < 0 ? line : line.substring(0, space);
+    String arg = space < 0 ? String("") : line.substring(space + 1);
+    arg.trim();
+
+    if (verb == "get") {
+        const long offset = settings::utcOffsetSeconds();
+        Serial.printf("ok: get title=%s\n", settings::eventTitles().c_str());
+        Serial.printf("ok: get speaker=%s\n", settings::speakerName().c_str());
+        Serial.printf("ok: get tz=%ld\n", offset);
+        return;
+    }
+
+    if (verb == "tz") {
+        long seconds = 0;
+        if (!parseLong(arg, &seconds) || !settings::setUtcOffsetSeconds(seconds)) {
+            Serial.println("err: tz needs an offset in seconds between -43200 and 50400");
+            return;
+        }
+        Serial.printf("ok: tz=%ld (UTC%s)\n", seconds,
+                      settings::formatUtcOffset(seconds).c_str());
+        return;
+    }
+
+    if (verb == "title") {
+        if (arg.length() == 0) {
+            Serial.println("err: title needs a value");
+            return;
+        }
+        settings::setEventTitles(arg);
+        loadTitles();
+        Serial.printf("ok: title=%s\n", settings::eventTitles().c_str());
+        return;
+    }
+
+    if (verb == "speaker") {
+        if (!settings::setSpeaker(arg)) {
+            Serial.println("err: speaker must be NONE, INTERNAL, HAT_SPK, or HAT_SPK2");
+            return;
+        }
+        Serial.printf("ok: speaker=%s (restart to apply)\n", settings::speakerName().c_str());
+        return;
+    }
+
+    Serial.printf("err: unknown command %s\n", verb.c_str());
+}
+
+// Settings that need a value read a whole line, so input is buffered until
+// Enter rather than dispatched per character like the single-key commands.
+enum class Prompt { None, EventTitles, Speaker, Timezone };
+
+Prompt activePrompt = Prompt::None;
+String promptBuffer;
+
+void beginPrompt(Prompt prompt) {
+    activePrompt = prompt;
+    promptBuffer = "";
+
+    switch (prompt) {
+        case Prompt::EventTitles:
+            Serial.printf("current: %s\n", settings::eventTitles().c_str());
+            Serial.println("separate multiple titles with | and use [red]...[/] for colour");
+            Serial.print("new title(s)> ");
+            break;
+        case Prompt::Speaker:
+            Serial.printf("current: %s\n", settings::speakerName().c_str());
+            for (const settings::SpeakerOption& option : settings::SPEAKER_OPTIONS) {
+                Serial.printf("  %s\n", option.name);
+            }
+            Serial.print("speaker> ");
+            break;
+        case Prompt::Timezone: {
+            const long current = settings::utcOffsetSeconds();
+            bool marked = false;
+            for (size_t i = 0; i < settings::timezoneCount(); ++i) {
+                const settings::Timezone& zone = settings::TIMEZONES[i];
+                // Several cities share an offset, so only flag the first match.
+                const bool isCurrent = !marked && zone.offsetSeconds == current;
+                marked = marked || isCurrent;
+                Serial.printf("  %2u  UTC%s  %-14s%s\n", static_cast<unsigned>(i + 1),
+                              settings::formatUtcOffset(zone.offsetSeconds).c_str(), zone.label,
+                              isCurrent ? "  <- current" : "");
+            }
+            Serial.print("time zone number> ");
+            break;
+        }
+        case Prompt::None:
+            break;
+    }
+}
+
+void applyPrompt() {
+    const Prompt prompt = activePrompt;
+    String value = promptBuffer;
+    value.trim();
+    activePrompt = Prompt::None;
+    promptBuffer = "";
+    Serial.println();
+
+    if (value.length() == 0) {
+        Serial.println("  unchanged");
+        return;
+    }
+
+    switch (prompt) {
+        case Prompt::EventTitles:
+            settings::setEventTitles(value);
+            loadTitles();
+            Serial.printf("  titles  : %s\n", settings::eventTitles().c_str());
+            break;
+        case Prompt::Speaker:
+            if (settings::setSpeaker(value)) {
+                Serial.printf("  speaker : %s (restarting to apply)\n",
+                              settings::speakerName().c_str());
+                Serial.flush();
+                ESP.restart();
+            } else {
+                Serial.printf("  %s is not a known speaker type\n", value.c_str());
+            }
+            break;
+        case Prompt::Timezone: {
+            const long choice = value.toInt();
+            if (settings::setTimezone(static_cast<size_t>(choice))) {
+                const long offset = settings::utcOffsetSeconds();
+                Serial.printf("  timezone: UTC%s (%s)\n",
+                              settings::formatUtcOffset(offset).c_str(),
+                              settings::timezoneLabel(offset));
+            } else {
+                Serial.printf("  pick a number between 1 and %u\n",
+                              static_cast<unsigned>(settings::timezoneCount()));
+            }
+            break;
+        }
+        case Prompt::None:
+            break;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Improv Wi-Fi provisioning
+//
+// Lets the browser installer hand over credentials over the same USB serial
+// link, so no network details are compiled into a published image.
+// ---------------------------------------------------------------------------
+
+ImprovWiFi improv(&Serial);
+
+// handleSerial() consumes a byte per call regardless of content, so it would
+// otherwise swallow the single-character commands. Packets arrive as one burst,
+// so the header byte opens a short window during which bytes belong to Improv.
+constexpr uint32_t IMPROV_BURST_MS = 250;
+uint32_t improvBurstUntil = 0;
+
+void onImprovConnected(const char* ssid, const char* password) {
+    settings::saveWifi(ssid, password);
+    Serial.printf("  improv  : provisioned for %s\n", ssid);
 }
 
 // ---------------------------------------------------------------------------
@@ -669,12 +939,12 @@ void drawTitle(LovyanGFX* g, int titleH) {
 
     // Blank pause between titles. Only the title area clears; the rule and
     // countdown below stay put.
-    if (TITLE_COUNT > 1 && elapsed >= titleCycleMs) {
+    if (titles.size() > 1 && elapsed >= titleCycleMs) {
         titleScrolling = false;
         return;
     }
 
-    const int span = drawMarqueeTitle(g, TITLES[titleIndex], 2, titleH + 2, elapsed);
+    const int span = drawMarqueeTitle(g, titles[titleIndex].c_str(), 2, titleH + 2, elapsed);
     titleScrolling = span > 0;
 
     if (span > 0) {
@@ -751,6 +1021,17 @@ void drawCountdown(LovyanGFX* g, int64_t remaining) {
     drawStrip(g);
 }
 
+void renderCountdown(int64_t remaining) {
+    ensureSprite();
+    if (spriteReady) {
+        drawCountdown(&sprite(), remaining);
+        sprite().pushSprite(0, 0);
+    } else {
+        // Flickers, but a blank screen would look like a crash.
+        drawCountdown(&M5.Display, remaining);
+    }
+}
+
 // A message from a team, another team, or the organiser, above the countdown.
 void drawOverlay(LovyanGFX* g, uint32_t elapsed) {
     g->fillRect(0, 0, layout.w, layout.h, TFT_BLACK);
@@ -801,17 +1082,6 @@ void renderOverlay(uint32_t elapsed) {
         sprite().pushSprite(0, 0);
     } else {
         drawOverlay(&M5.Display, elapsed);
-    }
-}
-
-void renderCountdown(int64_t remaining) {
-    ensureSprite();
-    if (spriteReady) {
-        drawCountdown(&sprite(), remaining);
-        sprite().pushSprite(0, 0);
-    } else {
-        // Flickers, but a blank screen would look like a crash.
-        drawCountdown(&M5.Display, remaining);
     }
 }
 
@@ -872,7 +1142,7 @@ void drawCelebration(LovyanGFX* g, uint32_t elapsedMs, bool flashing) {
     g->setFont(layout.titleFont);
     const int titleH = g->fontHeight();
     const int titleY = layout.h / 2 - titleH - 2;
-    celebrationScrolling = drawMarqueeTitle(g, TITLES[0], titleY, titleH + 2, elapsedMs) > 0;
+    celebrationScrolling = drawMarqueeTitle(g, titles[0].c_str(), titleY, titleH + 2, elapsedMs) > 0;
 
     g->setFont(layout.labelFont);
     g->setTextDatum(middle_center);
@@ -1015,6 +1285,19 @@ void sweepTones() {
     Serial.println("sweep: done");
 }
 
+void quickTone() {
+    constexpr float TEST_HZ = 523.0f;
+    constexpr uint32_t TEST_MS = 250;
+
+    Serial.printf("tone: %.0f Hz for %lu ms\n", TEST_HZ, static_cast<unsigned long>(TEST_MS));
+    if (M5.Speaker.isEnabled()) {
+        M5.Speaker.tone(TEST_HZ, TEST_MS);
+        M5.delay(TEST_MS + 100);
+        M5.Speaker.stop();
+    }
+    Serial.println("tone: done");
+}
+
 // One cycle of a full-scale square wave, 8-bit unsigned. The default tone()
 // waveform is a sine; a square pushes a 1-bit delta-sigma buzzer much harder.
 const uint8_t SQUARE_WAVE[16] = {255, 255, 255, 255, 255, 255, 255, 255,
@@ -1081,6 +1364,12 @@ void onNtpSync(struct timeval*) {
 }
 
 bool syncFromNtp() {
+    const String ssid = settings::ssid();
+    if (ssid.length() == 0) {
+        Serial.println("  wifi    : NOT PROVISIONED (use the web installer to set Wi-Fi)");
+        return false;
+    }
+
     WiFi.mode(WIFI_STA);
     if (messaging::enabled()) {
         // Modem sleep adds hundreds of ms to inbound delivery. Units with
@@ -1088,7 +1377,7 @@ bool syncFromNtp() {
         WiFi.setSleep(false);
     }
     if (WiFi.status() != WL_CONNECTED) {
-        WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+        WiFi.begin(ssid.c_str(), settings::password().c_str());
     }
 
     const uint32_t deadline = millis() + WIFI_TIMEOUT_MS;
@@ -1185,6 +1474,31 @@ void waitForFireInstant() {
     }
 }
 
+void configureStickS3SpkHat2(bool enabled) {
+#if defined(CONFIG_IDF_TARGET_ESP32S3)
+    if (!enabled || M5.getBoard() != m5::board_t::board_M5StickS3) {
+        return;
+    }
+
+    M5.Power.setExtOutput(true);
+
+    auto speakerConfig = M5.Speaker.config();
+    speakerConfig.pin_bck = GPIO_NUM_0;
+    speakerConfig.pin_ws = GPIO_NUM_8;
+    speakerConfig.pin_data_out = GPIO_NUM_1;
+    speakerConfig.pin_mck = GPIO_NUM_NC;
+    speakerConfig.i2s_port = I2S_NUM_0;
+    speakerConfig.use_dac = false;
+    speakerConfig.buzzer = false;
+    speakerConfig.stereo = false;
+    speakerConfig.magnification = 16;
+    M5.Speaker.config(speakerConfig);
+    M5.Speaker.begin();
+#else
+    (void)enabled;
+#endif
+}
+
 }  // namespace
 
 void setup() {
@@ -1193,12 +1507,20 @@ void setup() {
     Serial.begin(115200);
     M5.delay(200);
 
+    // NVS is ready before setup() runs, so the stored speaker can be applied to
+    // the very first M5.begin() rather than needing a second restart.
+    settings::begin();
+    const settings::SpeakerOption& speaker = settings::speaker();
+
     auto cfg = M5.config();
-    // Speaker hats are not detectable at runtime, so the fitted one is named in .env.
-    cfg.internal_spk = SPEAKER_INTERNAL;
-    cfg.external_speaker.hat_spk = SPEAKER_HAT_SPK;
-    cfg.external_speaker.hat_spk2 = SPEAKER_HAT_SPK2;
+    // Speaker hats are not detectable at runtime, so the fitted one is configured.
+    cfg.internal_spk = speaker.internal;
+    cfg.external_speaker.hat_spk = speaker.hatSpk;
+    cfg.external_speaker.hat_spk2 = speaker.hatSpk2;
     M5.begin(cfg);
+    configureStickS3SpkHat2(speaker.hatSpk2);
+
+    loadTitles();
 
     M5.Display.setRotation(1);
     M5.Display.setBrightness(BRIGHTNESS);
@@ -1216,9 +1538,14 @@ void setup() {
     Serial.printf("  board   : %d\n", static_cast<int>(M5.getBoard()));
     Serial.printf("  panel   : %dx%d\n", layout.w, layout.h);
     Serial.printf("  speaker : %s (%s)\n", M5.Speaker.isEnabled() ? "present" : "ABSENT",
-                  SPEAKER_NAME);
-    Serial.printf("  event   : %s\n", EVENT_NAME);
-    Serial.printf("  titles  : %u\n", static_cast<unsigned>(TITLE_COUNT));
+                  speaker.name);
+    if (M5.Speaker.isEnabled()) {
+        const auto speakerConfig = M5.Speaker.config();
+        Serial.printf("  audio   : BCK=%d LRCLK=%d DATA=%d\n", speakerConfig.pin_bck,
+                      speakerConfig.pin_ws, speakerConfig.pin_data_out);
+    }
+    Serial.printf("  event   : %s\n", plainTitle.c_str());
+    Serial.printf("  titles  : %u\n", static_cast<unsigned>(titles.size()));
     Serial.printf("  target  : %lld\n", static_cast<long long>(EVENT_EPOCH_UTC));
     // MAC and roll are printed so `pio run -t fleet` output can be reconciled
     // against scripts/fleet_voices.py.
@@ -1226,6 +1553,8 @@ void setup() {
                   mac[4], mac[5]);
     Serial.printf("  roll    : %u\n", voice::rollFor(efuse));
     Serial.printf("  voice   : %u (%s)\n", voiceIndex, fanfare::VOICES[voiceIndex].name);
+    Serial.printf("  wifi    : %s\n",
+                  settings::wifiConfigured() ? "provisioned" : "NOT PROVISIONED");
 
     snprintf(deviceIdStr, sizeof(deviceIdStr), "%02x%02x%02x", mac[3], mac[4], mac[5]);
     claimCode = claimCodeFor(deviceIdStr, CLAIM_SALT);
@@ -1234,9 +1563,15 @@ void setup() {
     Serial.printf("  mqtt    : %s\n", messaging::enabled() ? MQTT_HOST : "disabled");
     printSerialHelp();
 
+    improv.setDeviceInfo(ImprovTypes::ChipFamily::CF_ESP32, FIRMWARE_NAME, FIRMWARE_VERSION,
+                         FIRMWARE_NAME);
+    improv.onImprovConnected(onImprovConnected);
+
     if (M5.Speaker.isEnabled()) {
-        M5.Speaker.setVolume(255);
-        M5.Speaker.setAllChannelVolume(255);
+        const uint8_t volume =
+            M5.getBoard() == m5::board_t::board_M5StickS3 && speaker.hatSpk2 ? 128 : 255;
+        M5.Speaker.setVolume(volume);
+        M5.Speaker.setAllChannelVolume(volume);
     }
 
     // Seed from the RTC first so the countdown is live before any network
@@ -1251,8 +1586,13 @@ void setup() {
         auditionAllVoices();
     }
 
+    // Claim the 64 KB sprite before WiFi, MQTT and ESP-NOW fragment the heap.
+    // Falling back to direct drawing costs render time inside the fanfare's
+    // note loop, which is where jitter turns into an audible ragged attack.
+    ensureSprite();
+
     titleStartMs = millis();
-    renderMessage(EVENT_NAME, "syncing...");
+    renderMessage(plainTitle.c_str(), "syncing...");
     syncFromNtp();
 }
 
@@ -1262,11 +1602,56 @@ void loop() {
     // Serial trigger as well as the button, so a mounted unit can be auditioned
     // without being taken down.
     while (Serial.available()) {
+        // A title may legitimately begin with 'I', so the Improv sniff is
+        // suspended while a typed value is being collected.
+        if (activePrompt != Prompt::None) {
+            const int c = Serial.read();
+            if (c == '\r' || c == '\n') {
+                applyPrompt();
+            } else if (c == 0x1B) {
+                activePrompt = Prompt::None;
+                promptBuffer = "";
+                Serial.println("\n  cancelled");
+            } else if (c == 0x08 || c == 0x7F) {
+                if (promptBuffer.length() > 0) {
+                    promptBuffer.remove(promptBuffer.length() - 1);
+                    Serial.print("\b \b");
+                }
+            } else if (c >= 0x20 && promptBuffer.length() < 160) {
+                promptBuffer += static_cast<char>(c);
+                Serial.write(static_cast<char>(c));
+            }
+            continue;
+        }
+
+        if (collectingCommand) {
+            const int c = Serial.read();
+            if (c == '\r' || c == '\n') {
+                collectingCommand = false;
+                commandBuffer.trim();
+                handleMachineCommand(commandBuffer);
+                commandBuffer = "";
+            } else if (commandBuffer.length() < 200) {
+                commandBuffer += static_cast<char>(c);
+            }
+            continue;
+        }
+
+        if (millis() < improvBurstUntil || Serial.peek() == 'I') {
+            improv.handleSerial();
+            improvBurstUntil = millis() + IMPROV_BURST_MS;
+            continue;
+        }
         const int command = Serial.read();
-        if (command == 'a' || command == 'A') {
+        if (command == '!') {
+            collectingCommand = true;
+            commandBuffer = "";
+        } else if (command == 'a' || command == 'A') {
             auditionAllVoices();
         } else if (command == 's' || command == 'S') {
             syncFromNtp();
+        } else if (command == 'q' || command == 'Q') {
+            quickTone();
         } else if (command == 't' || command == 'T') {
             sweepTones();
         } else if (command == 'm' || command == 'M') {
@@ -1278,6 +1663,23 @@ void loop() {
             strncpy(a.notes, jingles::find("tada"), sizeof(a.notes) - 1);
             strncpy(a.jingle, "tada", sizeof(a.jingle) - 1);
             onAudioCommand(a);
+        } else if (command == 'i' || command == 'I') {
+            printSettings();
+        } else if (command == 'e' || command == 'E') {
+            beginPrompt(Prompt::EventTitles);
+        } else if (command == 'p' || command == 'P') {
+            beginPrompt(Prompt::Speaker);
+        } else if (command == 'z' || command == 'Z') {
+            beginPrompt(Prompt::Timezone);
+        } else if (command == 'w' || command == 'W') {
+            settings::clearWifi();
+            Serial.println("  wifi    : stored credentials cleared");
+        } else if (command == 'x' || command == 'X') {
+            settings::resetConfigurable();
+            loadTitles();
+            Serial.println("  settings reset to built-in defaults (restarting)");
+            Serial.flush();
+            ESP.restart();
         } else if (command == '?') {
             printSerialHelp();
         }
@@ -1288,7 +1690,7 @@ void loop() {
         toggleLights("button");
     } else if (M5.BtnA.wasSingleClicked()) {
         messaging::publishButton('A', "click");
-        renderMessage(EVENT_NAME, "syncing...");
+        renderMessage(plainTitle.c_str(), "syncing...");
         syncFromNtp();
     }
     if (M5.BtnB.wasPressed()) {
@@ -1301,7 +1703,8 @@ void loop() {
     messaging::poll(handlers);
     serviceSequence();
     serviceLedOverride();
-    if (messaging::connected() && millis() - lastStatePublishMs >= STATE_PUBLISH_MS) {
+    if (messaging::connected() && !nearFanfare() &&
+        millis() - lastStatePublishMs >= STATE_PUBLISH_MS) {
         lastStatePublishMs = millis();
         messaging::Status status = {fanfare::VOICES[voiceIndex].name,
                                     M5.Power.getBatteryLevel(), timeVerified, fired,
@@ -1316,22 +1719,22 @@ void loop() {
     }
     int64_t fireFrame = 0;
     if (espnow_link::takeFire(&fireFrame)) {
-        // The bridge sends this three seconds before the target. A stick whose
-        // clock agrees ignores it; one that lost its sync is pulled onto the
-        // schedule so the normal arm window fires it on time.
-        if (!fired && fireFrame == static_cast<int64_t>(EVENT_EPOCH_UTC)) {
-            const int64_t localRemaining =
-                static_cast<int64_t>(EVENT_EPOCH_UTC) - static_cast<int64_t>(time(nullptr));
-            if (localRemaining < 0 || localRemaining > FIRE_ARM_WINDOW_S + 2) {
-                struct timeval tv = {static_cast<time_t>(fireFrame - FIRE_ARM_WINDOW_S), 0};
-                settimeofday(&tv, nullptr);
-                Serial.printf("  espnow  : fire frame corrected the clock (was %lld s out)\n",
-                              static_cast<long long>(localRemaining - FIRE_ARM_WINDOW_S));
-            } else {
-                Serial.println("  espnow  : fire frame, clock already agrees");
-            }
-        } else {
+        // Last-resort path for a unit that never got a trusted clock: the
+        // bridge sends this three seconds before the target.
+        //
+        // A frame is only ever acted on when this unit has NO verified time of
+        // its own. ESP-NOW is unauthenticated broadcast and the event epoch is
+        // public, so a unit that knows the time must never let a frame move its
+        // clock - otherwise anyone in radio range could fire the whole room at
+        // any hour, and `fired` would latch for the rest of the day.
+        if (fired || fireFrame != static_cast<int64_t>(EVENT_EPOCH_UTC)) {
             Serial.printf("  espnow  : ignored fire for %lld\n", static_cast<long long>(fireFrame));
+        } else if (timeVerified) {
+            Serial.println("  espnow  : fire frame ignored, this unit has a verified clock");
+        } else {
+            struct timeval tv = {static_cast<time_t>(fireFrame - FIRE_ARM_WINDOW_S), 0};
+            settimeofday(&tv, nullptr);
+            Serial.println("  espnow  : fire frame accepted, no verified clock of our own");
         }
     }
 
@@ -1342,7 +1745,7 @@ void loop() {
     if (!fired && !preEventSyncAttempted && now > SANE_EPOCH &&
         remaining <= PRE_EVENT_SYNC_LEAD_S && remaining > FIRE_ARM_WINDOW_S) {
         preEventSyncAttempted = true;
-        renderMessage(EVENT_NAME, "final sync...");
+        renderMessage(plainTitle.c_str(), "final sync...");
         syncFromNtp();
         remaining = static_cast<int64_t>(EVENT_EPOCH_UTC) - static_cast<int64_t>(time(nullptr));
     } else if (!fired && timeVerified && millis() - lastSyncMs >= RESYNC_INTERVAL_MS) {
@@ -1352,6 +1755,12 @@ void loop() {
 
     if (!fired && remaining <= FIRE_ARM_WINDOW_S) {
         stopSequence();  // nothing plays over the fanfare
+        // A team's play() may have left the volume anywhere; the fanfare is
+        // the one thing that must be heard.
+        if (M5.Speaker.isEnabled()) {
+            M5.Speaker.setVolume(255);
+            M5.Speaker.setAllChannelVolume(255);
+        }
         waitForFireInstant();
         performCelebration();
         fired = true;
@@ -1371,7 +1780,7 @@ void loop() {
         return;
     }
 
-    if (overlay.active && millis() >= overlay.untilMs) {
+    if (overlay.active && static_cast<int32_t>(millis() - overlay.untilMs) >= 0) {
         overlay.active = false;
     }
     if (overlay.active) {
@@ -1382,8 +1791,8 @@ void loop() {
 
     renderCountdown(remaining);
 
-    if (TITLE_COUNT > 1 && millis() - titleStartMs >= titleCycleMs + TITLE_GAP_MS) {
-        titleIndex = (titleIndex + 1) % TITLE_COUNT;
+    if (titles.size() > 1 && millis() - titleStartMs >= titleCycleMs + TITLE_GAP_MS) {
+        titleIndex = (titleIndex + 1) % titles.size();
         titleStartMs = millis();
     }
 

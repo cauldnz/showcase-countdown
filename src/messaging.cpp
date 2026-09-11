@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 #include <ArduinoJson.h>
+#include <esp_idf_version.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #include <mqtt_client.h>
@@ -204,6 +205,18 @@ void begin(const char* deviceId) {
     snprintf(clientId, sizeof(clientId), "stick-%s", id);
 
     esp_mqtt_client_config_t cfg = {};
+// IDF 5 regrouped the flat client config into nested sub-structs.
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
+    cfg.broker.address.uri = uri;
+    cfg.credentials.client_id = clientId;
+    cfg.session.keepalive = 30;
+    cfg.session.last_will.topic = stateTopic;
+    cfg.session.last_will.msg = "{\"online\":false}";
+    cfg.session.last_will.retain = 1;
+    cfg.session.last_will.qos = 1;
+    cfg.network.reconnect_timeout_ms = 5000;
+    cfg.buffer.size = 1024;
+#else
     cfg.uri = uri;
     cfg.client_id = clientId;
     cfg.keepalive = 30;
@@ -213,6 +226,7 @@ void begin(const char* deviceId) {
     cfg.lwt_qos = 1;
     cfg.reconnect_timeout_ms = 5000;
     cfg.buffer_size = 1024;
+#endif
 
     client = esp_mqtt_client_init(&cfg);
     esp_mqtt_client_register_event(client, MQTT_EVENT_ANY, onEvent, nullptr);

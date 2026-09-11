@@ -1,6 +1,7 @@
 #include "espnow_link.h"
 
 #include <Arduino.h>
+#include <esp_idf_version.h>
 #include <esp_now.h>
 #include <esp_wifi.h>
 #include <stdlib.h>
@@ -21,7 +22,7 @@ volatile bool lockValue = false;
 volatile bool firePending = false;
 volatile int64_t fireEpoch = 0;
 
-void onReceive(const uint8_t* mac, const uint8_t* data, int length) {
+void handleFrame(const uint8_t* mac, const uint8_t* data, int length) {
     const size_t magicLength = strlen(MAGIC);
     // Diagnostic: every frame, so a channel or sender problem is visible.
     Serial.printf("  espnow  : frame from %02X:%02X:%02X len %d\n", mac[3], mac[4], mac[5], length);
@@ -48,6 +49,17 @@ void onReceive(const uint8_t* mac, const uint8_t* data, int length) {
         firePending = true;
     }
 }
+
+// IDF 5 hands the callback a receive-info struct where IDF 4 passed the MAC.
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
+void onReceive(const esp_now_recv_info_t* info, const uint8_t* data, int length) {
+    handleFrame(info->src_addr, data, length);
+}
+#else
+void onReceive(const uint8_t* mac, const uint8_t* data, int length) {
+    handleFrame(mac, data, length);
+}
+#endif
 
 }  // namespace
 

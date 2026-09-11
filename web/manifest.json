@@ -1,0 +1,17 @@
+{
+  "name": "showcase-countdown",
+  "version": "__VERSION__",
+  "new_install_prompt_erase": true,
+  "builds": [
+    {
+      "chipFamily": "ESP32",
+      "improv": true,
+      "parts": [{ "path": "stick-firmware.bin", "offset": 0 }]
+    },
+    {
+      "chipFamily": "ESP32-S3",
+      "improv": true,
+      "parts": [{ "path": "sticks3-firmware.bin", "offset": 0 }]
+    }
+  ]
+}

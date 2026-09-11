@@ -21,14 +21,21 @@ ENV_PATH = os.path.join(env.subst("$PROJECT_DIR"), ".env")  # noqa: F821
 GENERATED_DIR = os.path.join(env.subst("$BUILD_DIR"), "generated")  # noqa: F821
 HEADER_PATH = os.path.join(GENERATED_DIR, "env_config.h")
 
-REQUIRED = ("WIFI_SSID", "WIFI_PASSWORD", "EVENT_NAME", "EVENT_DATETIME")
+REQUIRED = ("EVENT_NAME", "EVENT_DATETIME")
 
 DEFAULTS = {
+    # Empty means "provision over Improv at runtime". Publishable images must
+    # leave these unset so no network credentials end up in the binary.
+    "WIFI_SSID": '""',
+    "WIFI_PASSWORD": '""',
+    "FIRMWARE_NAME": '"showcase-countdown"',
+    "FIRMWARE_VERSION": '"dev"',
     "NTP_SERVER_1": '"0.pool.ntp.org"',
     "NTP_SERVER_2": '"1.pool.ntp.org"',
     "NTP_SERVER_3": '"2.pool.ntp.org"',
     "BRIGHTNESS": "80",
     "SPEAKER": '"INTERNAL"',
+    "LED_ENABLED": '"false"',
     "LED_TYPE": '"NEOPIXEL"',
     "LED_COUNT": "1",
     "LED_PIN": "32",
@@ -38,9 +45,10 @@ DEFAULTS = {
     "LED_OFF_TIME": '"18:00"',
     "TITLE_DWELL_MS": "5000",
     "TITLE_GAP_MS": "300",
-    # Messaging broker. Empty host disables MQTT and the radio powers off after
-    # NTP sync as before.
-    "MQTT_HOST": '"192.168.8.1"',
+    # Room messaging (see docs/messaging.md). Off unless a broker is named, so
+    # a published image keeps the original behaviour: the radio powers off
+    # after the NTP sync and no MQTT client is started.
+    "MQTT_HOST": '""',
     "MQTT_PORT": "1883",
     # Mixed into the on-screen claim code so it cannot be derived from the
     # device id printed in the boot banner.
@@ -53,9 +61,6 @@ DEFAULTS = {
 _LINE = re.compile(r"^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$")
 _NUMERIC = re.compile(r"^[+-]?(?:\d+|\d*\.\d+)$")
 
-# Colour markup such as [red] / [#FF0000] / [/]. Stripped for the plain-text
-# EVENT_NAME, kept intact in EVENT_TITLES where it is rendered.
-_MARKUP = re.compile(r"\[(?:/|#[0-9A-Fa-f]{6}|[A-Za-z]+)\]")
 _UTC_OFFSET = re.compile(r"^(?:UTC)?([+-])(\d{1,2})(?::([0-5]\d))?$", re.IGNORECASE)
 _CLOCK_TIME = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
 
@@ -82,9 +87,20 @@ _SPEAKERS = {
     "HAT_SPK2": (0, 0, 1),
 }
 
+_BOOLEANS = {
+    "1": 1,
+    "true": 1,
+    "yes": 1,
+    "on": 1,
+    "0": 0,
+    "false": 0,
+    "no": 0,
+    "off": 0,
+}
+
 _DERIVED_SETTINGS = {
-    "LED_ENABLED",  # derived from LED_TYPE; a raw key must not override it
     "SPEAKER",
+    "LED_ENABLED",
     "LED_TYPE",
     "LED_COUNT",
     "LED_PIN",
@@ -93,10 +109,6 @@ _DERIVED_SETTINGS = {
     "LED_ON_TIME",
     "LED_OFF_TIME",
 }
-
-
-def strip_markup(text):
-    return _MARKUP.sub("", text).strip()
 
 
 def fail(message):
@@ -132,6 +144,14 @@ def integer_range_setting(entries, key, minimum, maximum):
         fail("%s=%r must be an integer" % (key, value))
     if parsed < minimum or parsed > maximum:
         fail("%s=%r must be between %d and %d" % (key, value, minimum, maximum))
+    return parsed
+
+
+def boolean_setting(entries, key):
+    value = setting_value(entries, key)
+    parsed = _BOOLEANS.get(value.strip().lower())
+    if parsed is None:
+        fail("%s=%r must be true or false" % (key, value))
     return parsed
 
 
@@ -223,7 +243,8 @@ def render(entries, epoch, parsed):
     led_type = setting_value(entries, "LED_TYPE").upper()
     if led_type not in _LED_TYPES:
         fail("LED_TYPE=%r must be one of: %s" % (led_type, ", ".join(sorted(_LED_TYPES))))
-    led_enabled, pixel_order, pixel_speed = _LED_TYPES[led_type]
+    type_enabled, pixel_order, pixel_speed = _LED_TYPES[led_type]
+    led_enabled = 1 if type_enabled and boolean_setting(entries, "LED_ENABLED") else 0
     # Up to a small ring or jewel. Watch the Grove 5 V budget above ~8 pixels.
     led_count = integer_range_setting(entries, "LED_COUNT", 1, 16)
     led_pin = integer_setting(entries, "LED_PIN", (32, 33))
@@ -243,13 +264,13 @@ def render(entries, epoch, parsed):
     ]
 
     # EVENT_NAME is pipe-separated so one key can carry a rotating set of titles.
+    # The firmware splits and strips markup itself, because the titles can also
+    # be replaced at runtime over serial.
     titles = [part.strip() for part in entries["EVENT_NAME"][0].split("|")]
     titles = [title for title in titles if title]
     if not titles:
         sys.exit("load_env: EVENT_NAME is empty")
-    lines.append("#define EVENT_NAME %s" % c_string(strip_markup(titles[0])))
-    lines.append("#define EVENT_TITLE_COUNT %d" % len(titles))
-    lines.append("#define EVENT_TITLES {%s}" % ", ".join(c_string(t) for t in titles))
+    lines.append("#define EVENT_TITLES_RAW %s" % c_string("|".join(titles)))
     lines.append("")
     lines.append("#define SPEAKER_NAME %s" % c_string(speaker))
     lines.append("#define SPEAKER_INTERNAL %d" % internal_spk)

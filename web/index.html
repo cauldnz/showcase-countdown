@@ -1,0 +1,667 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Install showcase-countdown</title>
+  <meta name="description" content="Flash showcase-countdown to an M5StickC PLUS SE or M5StickS3 from your browser.">
+  <script>
+    (() => {
+      const param = new URLSearchParams(window.location.search).get("clawpilotTheme");
+      const theme =
+        param || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+      document.documentElement.setAttribute("data-theme", theme);
+    })();
+  </script>
+  <script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
+  <style>
+    :root {
+      color-scheme: light;
+      --cp-bg: #f7f4ef;
+      --cp-bg-elevated: #fcfbf8;
+      --cp-surface: #ffffff;
+      --cp-surface-soft: #f5f5f5;
+      --cp-border: #dedede;
+      --cp-border-strong: #919191;
+      --cp-text: #242424;
+      --cp-text-muted: #5c5c5c;
+      --cp-text-soft: #6f6f6f;
+      --cp-accent: #b11f4b;
+      --cp-accent-hover: #9a1a41;
+      --cp-accent-soft: rgba(177, 31, 75, 0.08);
+      --cp-accent-fg: #ffffff;
+      --cp-success: #16a34a;
+      --cp-danger: #dc2626;
+      --cp-warning: #f59e0b;
+      --cp-link: #0078d4;
+      --cp-shadow: 0 18px 48px rgba(0, 0, 0, 0.12);
+      --cp-overlay: rgba(255, 255, 255, 0.8);
+      --cp-panel: rgba(255, 255, 255, 0.86);
+      --cp-panel-strong: rgba(255, 255, 255, 0.96);
+      --cp-sheen: rgba(255, 255, 255, 0.55);
+      --cp-highlight: rgba(177, 31, 75, 0.12);
+      --cp-swatch-red: #f80000;
+      --cp-swatch-green: #00fc00;
+      --cp-swatch-blue: #0000f8;
+      --cp-swatch-yellow: #f8fc00;
+      --cp-swatch-cyan: #00fcf8;
+      --cp-swatch-magenta: #f800f8;
+      --cp-swatch-white: #f8fcf8;
+      --cp-swatch-orange: #f8a400;
+      --cp-swatch-grey: #808080;
+      --cp-swatch-skyblue: #80cce8;
+      --cp-swatch-pink: #f8c0c8;
+    }
+
+    html[data-theme="dark"] {
+      color-scheme: dark;
+      --cp-bg: #3d3b3a;
+      --cp-bg-elevated: #343231;
+      --cp-surface: #292929;
+      --cp-surface-soft: #2e2e2e;
+      --cp-border: #474747;
+      --cp-border-strong: #5f5f5f;
+      --cp-text: #dedede;
+      --cp-text-muted: #919191;
+      --cp-text-soft: #b0b0b0;
+      --cp-accent: #fd8ea1;
+      --cp-accent-hover: #fb7b91;
+      --cp-accent-soft: rgba(253, 142, 161, 0.14);
+      --cp-accent-fg: #1a1a1a;
+      --cp-success: #4ade80;
+      --cp-danger: #f87171;
+      --cp-warning: #fbbf24;
+      --cp-link: #4da6ff;
+      --cp-shadow: 0 18px 48px rgba(0, 0, 0, 0.32);
+      --cp-overlay: rgba(41, 41, 41, 0.88);
+      --cp-panel: rgba(41, 41, 41, 0.72);
+      --cp-panel-strong: rgba(41, 41, 41, 0.96);
+      --cp-sheen: rgba(255, 255, 255, 0.04);
+      --cp-highlight: rgba(253, 142, 161, 0.12);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      padding: 2.5rem 1.25rem 4rem;
+      background: linear-gradient(145deg, var(--cp-bg), var(--cp-bg-elevated));
+      color: var(--cp-text);
+      font: 16px/1.6 "Segoe UI", Aptos, Calibri, -apple-system, BlinkMacSystemFont, sans-serif;
+      display: flex;
+      justify-content: center;
+    }
+
+    main {
+      width: 100%;
+      max-width: 58rem;
+    }
+
+    h1 {
+      margin: 0 0 .25rem;
+      font-size: 2rem;
+      letter-spacing: 0;
+    }
+
+    h2 {
+      margin: 2.5rem 0 .75rem;
+      font-size: 1.15rem;
+    }
+
+    .lede {
+      color: var(--cp-text-muted);
+      margin: 0 0 2rem;
+      max-width: 46rem;
+    }
+
+    .devices {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 1rem;
+      margin-bottom: 1.25rem;
+    }
+
+    .device {
+      overflow: hidden;
+      background: var(--cp-surface);
+      border: 1px solid var(--cp-border);
+      border-radius: 16px;
+    }
+
+    .device img {
+      display: block;
+      width: 100%;
+      aspect-ratio: 1;
+      object-fit: contain;
+      background: var(--cp-surface-soft);
+    }
+
+    .device-copy {
+      padding: 1rem 1.1rem 1.2rem;
+    }
+
+    .device h2 {
+      margin: 0 0 .35rem;
+      font-size: 1.05rem;
+    }
+
+    .device p {
+      margin: 0;
+      color: var(--cp-text-muted);
+      font-size: .92rem;
+    }
+
+    .install {
+      background: var(--cp-surface);
+      border: 1px solid var(--cp-border);
+      border-radius: 16px;
+      padding: 1.75rem;
+      text-align: center;
+    }
+
+    .install p {
+      margin: 0 0 1rem;
+      color: var(--cp-text-muted);
+    }
+
+    esp-web-install-button {
+      --esp-tools-button-color: var(--cp-accent);
+      --esp-tools-button-text-color: var(--cp-accent-fg);
+      --esp-tools-button-border-radius: 8px;
+    }
+
+    .install button,
+    .config button {
+      font: inherit;
+      font-weight: 600;
+      padding: .6rem 1.1rem;
+      border: none;
+      border-radius: .625rem;
+      background: var(--cp-accent);
+      color: var(--cp-accent-fg);
+      cursor: pointer;
+    }
+
+    .install button:hover,
+    .config button:hover:not([disabled]) {
+      background: var(--cp-accent-hover);
+    }
+
+    .fallback {
+      color: var(--cp-text-muted);
+      font-size: .95rem;
+    }
+
+    ol,
+    ul {
+      padding-left: 1.25rem;
+    }
+
+    li {
+      margin: .4rem 0;
+    }
+
+    code {
+      background: var(--cp-surface-soft);
+      border: 1px solid var(--cp-border);
+      border-radius: 4px;
+      padding: .1rem .4rem;
+      font-size: .9em;
+    }
+
+    .note {
+      border-left: 3px solid var(--cp-accent);
+      background: var(--cp-surface-soft);
+      padding: .85rem 1.1rem;
+      border-radius: 0 8px 8px 0;
+      color: var(--cp-text-muted);
+    }
+
+    .config {
+      background: var(--cp-surface);
+      border: 1px solid var(--cp-border);
+      border-radius: 16px;
+      padding: 1.5rem;
+    }
+
+    .field {
+      margin-bottom: 1rem;
+    }
+
+    .field label {
+      display: block;
+      margin-bottom: .35rem;
+      font-size: .9rem;
+      color: var(--cp-text-muted);
+    }
+
+    .field select,
+    .field input {
+      width: 100%;
+      padding: .55rem .7rem;
+      background: var(--cp-bg-elevated);
+      color: var(--cp-text);
+      border: 1px solid var(--cp-border);
+      border-radius: 6px;
+      font: inherit;
+    }
+
+    .config button[disabled] {
+      opacity: .45;
+      cursor: not-allowed;
+    }
+
+    #configLog {
+      margin-top: 1rem;
+      padding: .7rem .9rem;
+      background: var(--cp-bg-elevated);
+      border: 1px solid var(--cp-border);
+      border-radius: 6px;
+      font-family: Consolas, "Courier New", Courier, monospace;
+      font-size: .85rem;
+      white-space: pre-wrap;
+      max-height: 11rem;
+      overflow-y: auto;
+      color: var(--cp-text-muted);
+    }
+
+    .hint {
+      margin-top: .55rem;
+      font-size: .85rem;
+      color: var(--cp-text-muted);
+    }
+
+    .hint summary {
+      cursor: pointer;
+      color: var(--cp-link);
+    }
+
+    .hint p {
+      margin: .6rem 0;
+    }
+
+    .swatches {
+      list-style: none;
+      padding: 0;
+      margin: .6rem 0;
+      display: flex;
+      flex-wrap: wrap;
+      gap: .35rem .75rem;
+    }
+
+    .swatches li {
+      display: flex;
+      align-items: center;
+      gap: .35rem;
+    }
+
+    .swatches i {
+      width: .8rem;
+      height: .8rem;
+      border-radius: 3px;
+      border: 1px solid var(--cp-border);
+    }
+
+    footer {
+      margin-top: 3rem;
+      padding-top: 1.25rem;
+      border-top: 1px solid var(--cp-border);
+      color: var(--cp-text-muted);
+      font-size: .9rem;
+    }
+
+    a {
+      color: var(--cp-link);
+    }
+
+    @media (max-width: 42rem) {
+      body {
+        padding: 1.5rem 1rem 3rem;
+      }
+
+      .devices {
+        grid-template-columns: 1fr;
+      }
+
+      .device {
+        display: grid;
+        grid-template-columns: minmax(7.5rem, 42%) 1fr;
+        align-items: center;
+      }
+
+      .device-copy {
+        padding: .75rem;
+      }
+
+      .device h2 {
+        font-size: .95rem;
+      }
+
+      .device p {
+        font-size: .84rem;
+      }
+
+      .config button {
+        width: 100%;
+        margin-bottom: .5rem;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <main>
+    <h1>showcase-countdown</h1>
+    <p class="lede">An NTP-synchronised event countdown for the M5StickC PLUS SE and M5StickS3. Match your device
+      below, plug it in over USB, and install directly from this page.</p>
+
+    <section class="devices" aria-label="Supported devices">
+      <article class="device">
+        <img src="assets/stickc-plus-se.webp"
+          alt="M5StickC PLUS SE shown from the front and back in its translucent orange enclosure">
+        <div class="device-copy">
+          <h2>M5StickC PLUS SE</h2>
+          <p>Translucent orange case with an 8-pin Hat-Bus. Windows requires the FTDI VCP driver.</p>
+        </div>
+      </article>
+      <article class="device">
+        <img src="assets/sticks3.jpg" alt="M5StickS3 shown from the front and back in its black enclosure">
+        <div class="device-copy">
+          <h2>M5StickS3</h2>
+          <p>Black case with a blue front button and 16-pin Hat2-Bus. Uses native USB.</p>
+        </div>
+      </article>
+    </section>
+
+    <div class="install">
+      <p>One installer supports both models. It detects the connected chip and selects the correct firmware.</p>
+      <esp-web-install-button manifest="manifest.json">
+        <button slot="activate">Connect and install</button>
+        <span slot="unsupported" class="fallback">
+          This browser cannot talk to serial devices. Open this page in Chrome, Edge, or Opera on a desktop computer.
+        </span>
+        <span slot="not-allowed" class="fallback">
+          Installing requires a secure (https) connection.
+        </span>
+      </esp-web-install-button>
+    </div>
+
+    <h2>Before you start</h2>
+    <ul>
+      <li>Use Chrome, Edge, or Opera on a desktop. Safari and mobile browsers cannot access serial ports.</li>
+      <li>PLUS SE on Windows: install the <a href="https://ftdichip.com/drivers/vcp-drivers/">FTDI VCP driver</a>. The
+        device will not appear as a COM port without it, and some machines need it installed twice.</li>
+      <li>StickS3 download mode: hold the side button until the internal green LED flashes, then release it. After
+        installation, short-press the side button to start the firmware.</li>
+      <li>Close any other program using the port, including the Arduino IDE or a PlatformIO serial monitor.</li>
+    </ul>
+
+    <h2>What happens</h2>
+    <ol>
+      <li>Pick your Stick's serial port when the browser asks.</li>
+      <li>The firmware is written, which takes about a minute.</li>
+      <li>You are prompted for your Wi-Fi network. Credentials are sent over the USB cable and saved on the device.</li>
+      <li>The Stick syncs its clock from NTP and starts counting down.</li>
+    </ol>
+
+    <div class="note">
+      Your Wi-Fi credentials are never part of the download. The published firmware contains no network details at
+      all: it asks for them after installing and stores them on the device, so this page cannot see them and neither
+      can anyone else who downloads the image.
+    </div>
+
+    <h2>Configure your device</h2>
+    <p>Change the title and time zone on a Stick that is already running. This talks to the device over the same USB
+      cable, so nothing is sent anywhere else.</p>
+
+    <div class="config">
+      <div class="field">
+        <label for="cfgTitle">Event title</label>
+        <input id="cfgTitle" type="text" placeholder="[red]Launch[/] Day|Doors open 6pm" autocomplete="off">
+        <details class="hint">
+          <summary>Formatting help</summary>
+          <p>Separate several titles with <code>|</code> and the device cycles through them. A title too wide for the
+            screen scrolls instead of being cut off.</p>
+          <p>Open a colour with a tag and return to white with <code>[/]</code>, for example
+            <code>[red]Launch[/] Day</code>. The named colours are:</p>
+          <ul class="swatches">
+            <li><i style="background:var(--cp-swatch-red)"></i><code>[red]</code></li>
+            <li><i style="background:var(--cp-swatch-green)"></i><code>[green]</code></li>
+            <li><i style="background:var(--cp-swatch-blue)"></i><code>[blue]</code></li>
+            <li><i style="background:var(--cp-swatch-yellow)"></i><code>[yellow]</code></li>
+            <li><i style="background:var(--cp-swatch-cyan)"></i><code>[cyan]</code></li>
+            <li><i style="background:var(--cp-swatch-magenta)"></i><code>[magenta]</code></li>
+            <li><i style="background:var(--cp-swatch-white)"></i><code>[white]</code></li>
+            <li><i style="background:var(--cp-swatch-orange)"></i><code>[orange]</code></li>
+            <li><i style="background:var(--cp-swatch-grey)"></i><code>[grey]</code></li>
+            <li><i style="background:var(--cp-swatch-skyblue)"></i><code>[skyblue]</code></li>
+            <li><i style="background:var(--cp-swatch-pink)"></i><code>[pink]</code></li>
+          </ul>
+          <p>Any other colour uses <code>[#RRGGBB]</code>, such as <code>[#00A4EF]</code>. The panel is RGB565, so
+            shades are approximate and brand colours often read duller than the named equivalents. Plain
+            <code>[blue]</code> is very dark on this screen; <code>[skyblue]</code> shows up far better.</p>
+          <p>A tag that is not recognised is drawn as literal text rather than silently dropped, so a typo is visible
+            instead of swallowing the words after it.</p>
+        </details>
+      </div>
+      <div class="field">
+        <label for="cfgTimezone">Time zone</label>
+        <select id="cfgTimezone"></select>
+      </div>
+      <div class="field">
+        <label for="cfgSpeaker">Speaker</label>
+        <select id="cfgSpeaker">
+          <option value="INTERNAL">Built-in buzzer</option>
+          <option value="HAT_SPK2">SPK HAT2 (I2S MAX98357)</option>
+          <option value="HAT_SPK">SPK HAT (analogue PAM8303)</option>
+          <option value="NONE">No audio</option>
+        </select>
+      </div>
+      <button id="cfgConnect" type="button">Connect to device</button>
+      <button id="cfgApply" type="button" disabled>Apply settings</button>
+      <div id="configLog" hidden></div>
+    </div>
+
+    <div class="note">
+      The device stores a fixed offset from UTC and does no daylight-saving calculation of its own. This page reads the
+      offset your chosen zone is on <em>right now</em> and sends that, so re-apply it after a daylight-saving change.
+    </div>
+
+    <h2>Afterwards</h2>
+    <p>The Stick has a few controls once it is running:</p>
+    <ul>
+      <li>Single-click button A to force a clock re-sync, double-click to toggle the Grove lights.</li>
+      <li>Button B shows the diagnostics screen.</li>
+      <li>Over serial at 115200 baud, send <code>?</code> for the full command list.</li>
+    </ul>
+    <p>To move the device to a different network, run the installer again and choose the Wi-Fi option, or send
+      <code>w</code> over serial to forget the stored credentials.</p>
+
+    <footer>
+      <a href="https://github.com/coatsy/showcase-countdown">Source on GitHub</a> &middot; Installer powered by
+      <a href="https://esphome.github.io/esp-web-tools/">ESP Web Tools</a>
+    </footer>
+  </main>
+
+  <script>
+    // ESP Web Tools' "No port selected" dialog lists drivers for the CP2102 and
+    // CH34x bridges, but the PLUS SE uses an FTDI part. That dialog renders in a
+    // closed-off shadow root with no slot to extend, so the entry is added once
+    // the dialog appears. If the internals ever change, the observer simply
+    // finds nothing and the dialog is left as it shipped.
+    (function () {
+      var DIALOG = 'ewt-no-port-picked-dialog';
+
+      function buildEntry() {
+        var item = document.createElement('li');
+        item.dataset.ftdiDriver = '';
+        item.appendChild(document.createTextNode('FTDI drivers, used by the M5StickC PLUS SE: '));
+
+        var link = document.createElement('a');
+        link.href = 'https://ftdichip.com/drivers/vcp-drivers/';
+        link.target = '_blank';
+        link.rel = 'noopener';
+        link.textContent = 'Windows, macOS and Linux';
+        item.appendChild(link);
+
+        item.appendChild(document.createTextNode(
+          '. Without this the Stick never appears as a port, and some Windows machines '
+          + 'need it installed twice before it takes.'));
+        return item;
+      }
+
+      function addEntry(dialog) {
+        var attempts = 0;
+        var timer = setInterval(function () {
+          var root = dialog.shadowRoot;
+          var list = root && root.querySelector('ul');
+          if (list) {
+            clearInterval(timer);
+            if (!list.querySelector('[data-ftdi-driver]')) {
+              list.insertBefore(buildEntry(), list.firstChild);
+            }
+          } else if (++attempts > 40) {
+            clearInterval(timer);
+          }
+        }, 50);
+      }
+
+      new MutationObserver(function (records) {
+        records.forEach(function (record) {
+          Array.prototype.forEach.call(record.addedNodes, function (node) {
+            if (node.nodeType === 1 && node.localName === DIALOG) {
+              addEntry(node);
+            }
+          });
+        });
+      }).observe(document.body, { childList: true });
+    })();
+
+    // Device configuration over Web Serial. The firmware stores a plain UTC
+    // offset and never computes daylight saving, so the offset is resolved here
+    // where the browser's time zone database can answer it correctly.
+    (function () {
+      var titleInput = document.getElementById('cfgTitle');
+      var zoneSelect = document.getElementById('cfgTimezone');
+      var speakerSelect = document.getElementById('cfgSpeaker');
+      var connectButton = document.getElementById('cfgConnect');
+      var applyButton = document.getElementById('cfgApply');
+      var logBox = document.getElementById('configLog');
+
+      var port = null;
+      var writer = null;
+
+      function log(text) {
+        logBox.hidden = false;
+        logBox.textContent += text + '\n';
+        logBox.scrollTop = logBox.scrollHeight;
+      }
+
+      function offsetSeconds(timeZone, when) {
+        var parts = new Intl.DateTimeFormat('en-US', {
+          timeZone: timeZone,
+          timeZoneName: 'longOffset',
+        }).formatToParts(when);
+        var name = '';
+        parts.forEach(function (part) {
+          if (part.type === 'timeZoneName') { name = part.value; }
+        });
+        var match = /GMT([+-])(\d{1,2})(?::(\d{2}))?/.exec(name);
+        if (!match) { return 0; }
+        var sign = match[1] === '-' ? -1 : 1;
+        return sign * (Number(match[2]) * 3600 + Number(match[3] || 0) * 60);
+      }
+
+      function formatOffset(seconds) {
+        var sign = seconds < 0 ? '-' : '+';
+        var abs = Math.abs(seconds);
+        return 'UTC' + sign
+          + String(Math.floor(abs / 3600)).padStart(2, '0') + ':'
+          + String(Math.floor((abs % 3600) / 60)).padStart(2, '0');
+      }
+
+      function buildZoneList() {
+        var zones = typeof Intl.supportedValuesOf === 'function'
+          ? Intl.supportedValuesOf('timeZone')
+          : [];
+        var local = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        if (zones.indexOf(local) === -1) { zones = [local].concat(zones); }
+
+        var now = new Date();
+        zones
+          .map(function (zone) { return { zone: zone, offset: offsetSeconds(zone, now) }; })
+          .sort(function (a, b) { return a.offset - b.offset || a.zone.localeCompare(b.zone); })
+          .forEach(function (entry) {
+            var option = document.createElement('option');
+            option.value = String(entry.offset);
+            option.textContent = formatOffset(entry.offset) + '  ' + entry.zone.replace(/_/g, ' ');
+            option.selected = entry.zone === local;
+            zoneSelect.appendChild(option);
+          });
+      }
+
+      async function send(line) {
+        await writer.write(new TextEncoder().encode('!' + line + '\n'));
+      }
+
+      async function readReplies() {
+        var decoder = new TextDecoderStream();
+        port.readable.pipeTo(decoder.writable).catch(function () { });
+        var reader = decoder.readable.getReader();
+        var pending = '';
+        for (;;) {
+          var chunk = await reader.read();
+          if (chunk.done) { return; }
+          pending += chunk.value;
+          var lines = pending.split('\n');
+          pending = lines.pop();
+          lines.forEach(function (line) {
+            line = line.trim();
+            // The device also prints status output; only echo command replies.
+            if (line.indexOf('ok:') === 0 || line.indexOf('err:') === 0) { log(line); }
+          });
+        }
+      }
+
+      connectButton.addEventListener('click', async function () {
+        if (!('serial' in navigator)) {
+          log('This browser cannot access serial ports. Use Chrome, Edge, or Opera.');
+          return;
+        }
+        try {
+          port = await navigator.serial.requestPort();
+          await port.open({ baudRate: 115200, bufferSize: 8192 });
+          writer = port.writable.getWriter();
+          readReplies();
+          connectButton.disabled = true;
+          applyButton.disabled = false;
+          log('Connected. Reading current settings.');
+          await send('get');
+        } catch (err) {
+          log('Could not connect: ' + err.message);
+        }
+      });
+
+      applyButton.addEventListener('click', async function () {
+        applyButton.disabled = true;
+        try {
+          var title = titleInput.value.trim();
+          if (title) { await send('title ' + title); }
+          await send('tz ' + zoneSelect.value);
+          await send('speaker ' + speakerSelect.value);
+          log('Sent. Restart the device if you changed the speaker.');
+        } catch (err) {
+          log('Failed to send: ' + err.message);
+        }
+        applyButton.disabled = false;
+      });
+
+      buildZoneList();
+    })();
+  </script>
+</body>
+
+</html>

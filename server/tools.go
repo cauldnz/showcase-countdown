@@ -123,6 +123,9 @@ type renameIn struct {
 	Team    string `json:"team" jsonschema:"current team name or four-digit claim code"`
 	NewName string `json:"new_name" jsonschema:"the new team name"`
 }
+type shoutCooldownIn struct {
+	Seconds int `json:"seconds" jsonschema:"per-team shout gap in seconds; 0 removes the limit, higher calms a noisy room (max 3600)"`
+}
 
 // findTeamOrCode accepts a team name, a bare claim code, or the default
 // "Table 1234" label an unnamed stick shows in list_teams.
@@ -450,6 +453,22 @@ func (a *App) mcpServer() *mcp.Server {
 			return text("Room unlocked."), nil, nil
 		})
 
+	mcp.AddTool(s, &mcp.Tool{Name: "shout_cooldown", Description: "Organiser: change the per-team shout gap live. 0 removes it; raise it if the room gets noisy."},
+		func(ctx context.Context, req *mcp.CallToolRequest, in shoutCooldownIn) (*mcp.CallToolResult, any, error) {
+			if err := a.organiser(req); err != nil {
+				return nil, nil, err
+			}
+			if in.Seconds < 0 || in.Seconds > 3600 {
+				return nil, nil, fmt.Errorf("seconds must be between 0 and 3600")
+			}
+			a.policy.SetShoutCooldown(time.Duration(in.Seconds) * time.Second)
+			a.bus.Emit(Event{Kind: "organiser", Text: fmt.Sprintf("shout cooldown set to %d s", in.Seconds)})
+			if in.Seconds == 0 {
+				return text("Shout cooldown removed."), nil, nil
+			}
+			return text("Shout cooldown is now %d seconds per team.", in.Seconds), nil, nil
+		})
+
 	mcp.AddTool(s, &mcp.Tool{Name: "mute", Description: "Organiser: stop a team's stick accepting commands."},
 		func(ctx context.Context, req *mcp.CallToolRequest, in teamIn) (*mcp.CallToolResult, any, error) {
 			if err := a.organiser(req); err != nil {
@@ -523,7 +542,8 @@ func (a *App) mcpServer() *mcp.Server {
 			manual, auto := a.policy.LockState()
 			return jsonResult(map[string]any{
 				"manual_lock": manual, "auto_lock": auto, "muted": a.policy.MutedIDs(),
-				"bridge": a.fleet.BridgeStatus(), "devices": a.fleet.Snapshot(),
+				"shout_cooldown_s": int(a.policy.ShoutCooldown().Seconds()),
+				"bridge":           a.fleet.BridgeStatus(), "devices": a.fleet.Snapshot(),
 			}), nil, nil
 		})
 

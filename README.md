@@ -31,6 +31,9 @@ The SPK2 HAT plugs straight onto the 8-pin Hat-Bus and drives a 1 W speaker
 through a MAX98357 I2S amplifier — worth the US$5 if you want the unit to be
 heard rather than just seen.
 
+Whichever HAT you fit, set `SPEAKER` in `.env` to match it. The firmware cannot
+probe for one, and the default routes audio to the onboard buzzer instead.
+
 Note that there are two speaker HATs in the M5Stack catalogue and they are
 **not** interchangeable: the older
 [Speaker Hat](https://shop.m5stack.com/products/m5stickc-speaker-hat) is an
@@ -40,8 +43,10 @@ analogue PAM8303 fed from the DAC pin, while SPK2 is I2S. Get SPK2.
 
 The Grove connector exposes 5 V, ground, GPIO 32 and GPIO 33. Connect the
 pixel's data-in wire to the configured GPIO (32 by default), power to 5 V, and
-ground to ground. One or two 800 kHz NeoPixel/WS2812-compatible RGB pixels are
-supported.
+ground to ground. One or two NeoPixel/WS2812-compatible RGB pixels are
+supported, at either the usual 800 kHz or the 400 kHz rate used by classic v1
+pixels. The lights are disabled by default; set `LED_ENABLED="true"` in `.env`
+to turn the output on.
 
 See the [Grove-to-NeoPixel schematic](docs/grove-neopixel-schematic.md) for the
 connector pin numbers, cable colours, level shifter, protection resistor,
@@ -69,6 +74,83 @@ unit if you already own one.
 The layout derives everything from `M5.Display.width()/height()`, so one source
 tree serves all of them.
 
+## Install from your browser
+
+The quickest way to get the firmware onto a Stick is the hosted installer at
+[coatsy.github.io/showcase-countdown](https://coatsy.github.io/showcase-countdown/).
+Plug the device in over USB, click install, and answer the Wi-Fi prompt. No
+toolchain, no clone, no `.env`.
+
+This needs Chrome, Edge, or Opera on a desktop: the page drives the serial port
+through the Web Serial API, which Safari and mobile browsers do not implement.
+
+The published image contains no network credentials. It ships with Wi-Fi unset
+and is provisioned over the
+[Improv serial standard](https://www.improv-wifi.com/serial/), so the browser
+sends the credentials down the USB cable after flashing and the device keeps
+them in NVS. Send `w` over serial to forget them again.
+
+Build the firmware yourself if you want to change the event date, the palette,
+or the lights, since those are compile-time settings. The event title, speaker
+type, and time zone can be changed without rebuilding, either from the installer
+page or over serial.
+
+### Configuring from the page
+
+The installer page also has a configuration panel for a Stick that is already
+running. Connect the device, pick a title, time zone, and speaker, and apply.
+
+The time zone list matters because the firmware stores a plain offset from UTC
+and never calculates daylight saving. The page resolves your chosen zone to the
+offset it is on at that moment and sends that number, so Europe/London sends
+UTC+01:00 during British Summer Time rather than UTC+00:00. The consequence is
+that a device needs the setting re-applied after a daylight-saving transition.
+
+## Configuring a device over serial
+
+The event title, speaker type, and time zone can be changed on a running device
+without rebuilding. Connect at 115200 baud, or use the console built into the
+[hosted installer](https://coatsy.github.io/showcase-countdown/), and send a
+single key:
+
+| Key | Effect |
+| --- | --- |
+| `?` | List the available commands |
+| `i` | Show the current settings |
+| `e` | Set the event title(s), pipe-separated, colour markup allowed |
+| `p` | Set the speaker type |
+| `z` | Choose a time zone from a numbered list |
+| `w` | Forget the stored Wi-Fi credentials |
+| `x` | Reset settings to the values the firmware was built with |
+
+Commands that need a value print a prompt and read a line, so type the value and
+press Enter. Enter on its own leaves the setting alone, and Escape cancels.
+
+Everything set this way lives in NVS and survives a power cycle. The values in
+`.env` become the defaults: a device that has never been configured behaves
+exactly as its build intended, and `x` returns it to that state. Changing the
+speaker restarts the device, because M5Unified selects the audio hardware during
+startup.
+
+The `z` list offers standard-time offsets only, since the device has no daylight
+saving rules of its own. Use the installer page instead if you want the offset a
+zone is actually on today.
+
+### Commands for scripts
+
+Lines beginning with `!` carry their value with them, which is how the installer
+page configures a device. Each one answers with `ok:` or `err:`.
+
+| Command | Effect |
+| --- | --- |
+| `!get` | Report the current title, speaker, and offset |
+| `!title <text>` | Set the title(s) |
+| `!tz <seconds>` | Set the UTC offset in seconds, from -43200 to 50400 |
+| `!speaker <name>` | Set the speaker type |
+
+The event date is not in this list. It is resolved to a fixed epoch at build
+time, so moving the event still means a rebuild and reflash.
+
 ## Setup and building
 
 ### Prerequisites
@@ -91,14 +173,18 @@ cp .env.template .env
 ```
 
 `.env` is git-ignored; `.env.template` documents the structure and is committed.
-The template covers every key, and the four with no sensible default are:
+The template covers every key, and the two with no sensible default are:
 
 | Key | Notes |
 | --- | --- |
-| `WIFI_SSID` | 2.4 GHz only — the ESP32-PICO-D4 has no 5 GHz radio |
-| `WIFI_PASSWORD` | See the note on secrets below |
 | `EVENT_NAME` | One or more titles, separated by `\|` |
 | `EVENT_DATETIME` | ISO-8601 with an **explicit** UTC offset or trailing `Z` |
+
+Wi-Fi is optional at build time. Set `WIFI_SSID` and `WIFI_PASSWORD` to bake
+credentials into a private build, or leave them out and provision the device
+over Improv instead. A compiled-in value is only a fallback: anything stored on
+the device takes precedence. Note that the ESP32-PICO-D4 has no 5 GHz radio, so
+the network must be 2.4 GHz either way.
 
 `EVENT_NAME` carries a few conveniences. Multiple titles separated by `|` are
 cycled; any title too wide for the screen scrolls marquee-style and is given at
@@ -112,22 +198,44 @@ EVENT_NAME="[red]Westpac[/] + [#00A4EF]Microsoft[/] Hackathon|Doors open 6pm"
 The panel is RGB565, so colours are quantised to five bits per channel and brand
 hex values often read duller than the named equivalents.
 
+The speaker setting is optional and defaults to the onboard buzzer:
+
+| Key       | Default    | Notes                                        |
+|-----------|------------|----------------------------------------------|
+| `SPEAKER` | `INTERNAL` | `INTERNAL`, `HAT_SPK`, `HAT_SPK2`, or `NONE` |
+
+M5Unified cannot detect a speaker HAT at runtime, so the fitted hardware has to
+be named here. Leaving this at `INTERNAL` while a HAT is attached is the usual
+cause of a unit that plays the fanfare far too quietly: the audio goes to the
+onboard buzzer and the HAT never makes a sound. Set `SPEAKER="HAT_SPK2"` for the
+SPK2 HAT, or `SPEAKER="HAT_SPK"` for the older analogue Speaker Hat. This is only
+the default; it can also be changed on a running device with the `p` command.
+The boot banner reports the configured choice either way.
+
 The Grove light settings are optional and have defaults:
 
-| Key                    | Default      | Notes                                      |
-|------------------------|--------------|--------------------------------------------|
-| `LED_TYPE`             | `NEOPIXEL`   | GRB pixels; `NONE` disables the output     |
-| `LED_COUNT`            | `1`          | One or two pixels                          |
-| `LED_PIN`              | `32`         | GPIO 32 or GPIO 33                         |
-| `LED_BRIGHTNESS`       | `64`         | Per-channel white level from 1 to 255      |
-| `LOCAL_UTC_OFFSET`     | `+10:00`     | Fixed offset from UTC; no DST calculation  |
-| `LED_ON_TIME`          | `08:00`      | Local time to turn the pixels white        |
-| `LED_OFF_TIME`         | `18:00`      | Local time to turn the pixels off          |
+| Key                | Default    | Notes                                        |
+|--------------------|------------|----------------------------------------------|
+| `LED_ENABLED`      | `false`    | Master switch for the Grove lights           |
+| `LED_TYPE`         | `NEOPIXEL` | GRB pixels at 800 kHz; `NONE` also disables  |
+| `LED_COUNT`        | `1`        | One or two pixels                            |
+| `LED_PIN`          | `32`       | GPIO 32 or GPIO 33                           |
+| `LED_BRIGHTNESS`   | `64`       | Per-channel white level from 1 to 255        |
+| `LOCAL_UTC_OFFSET` | `+10:00`   | Fixed offset from UTC; no DST calculation    |
+| `LED_ON_TIME`      | `08:00`    | Local time to turn the pixels white          |
+| `LED_OFF_TIME`     | `18:00`    | Local time to turn the pixels off            |
+
+The lights stay off until you set `LED_ENABLED="true"`, so a unit with nothing
+wired to the Grove port behaves sensibly out of the box. The remaining keys are
+ignored while the switch is off.
 
 Explicit colour-order variants such as `NEOPIXEL_RGB`, `NEOPIXEL_RBG`, and
 `NEOPIXEL_BGR` are available when a pixel does not use the usual GRB order.
-`WS2812` and `WS2812B` are aliases for the default GRB configuration. Changing
-these settings requires a rebuild and reflash.
+`WS2812` and `WS2812B` are aliases for the default GRB configuration. Classic v1
+NeoPixels are a different case again: they expect RGB ordering clocked at
+400 kHz rather than 800 kHz, so use `NEOPIXEL_V1` for those. A v1 pixel driven
+at 800 kHz typically stays dark rather than showing wrong colours. Changing any
+of these settings requires a rebuild and reflash.
 
 ### Build and flash
 
@@ -188,7 +296,8 @@ With `MQTT_HOST` set in `.env`, each unit keeps WiFi up after the time sync and
 joins an MQTT broker. Teams then drive their own stick from their coding agents
 through an MCP server: messages, jingles and composed tunes, LED patterns,
 shouts to the room, and messages to other tables. The four-digit claim code
-in the bottom-left of the screen is the team's credential.
+shown under the countdown is the team's credential. Messaging is off when
+`MQTT_HOST` is empty, so a published, Improv-provisioned image is unaffected.
 
 | Doc | What it covers |
 | --- | --- |
@@ -197,38 +306,51 @@ in the bottom-left of the screen is the team's credential.
 | [docs/teams.md](docs/teams.md) | The one-page handout for tables |
 | [server/](server/) | The Go MCP server, dashboard, fake fleet, and router deploy |
 
-Run it locally against any broker, with a dozen virtual sticks:
+The server, broker, LAN NTP and dashboard run as one Go binary on an
+**OpenWrt** router (tested only on a GL-MT3000, `aarch64`, OpenWrt 24.10). Run
+it locally against any broker, with a dozen virtual sticks:
 
 ```sh
 cd server && go build -o showcase-server . && \
   EVENT_DATETIME="2026-11-15T09:00:00+11:00" ORGANISER_SECRET=secret \
-  ./showcase-server -broker tcp://127.0.0.1:1883 -fake 12
+  ./showcase-server -embedded-broker :1883 -fake 12
 ```
 
-Dashboard at `http://localhost:8080/`, MCP at `http://localhost:8080/mcp/<code>`.
+Dashboard at `http://localhost:8090/`, MCP at `http://localhost:8090/mcp/<code>`.
 
 ## Layout
 
 ```text
-platformio.ini              Build environments
+platformio.ini              Build environments (stick, bridge, sticks3)
 scripts/load_env.py         .env -> generated env_config.h (pre-build)
-scripts/fetch_env.ps1       Pull .env from Infisical (this fork's setup)
+scripts/merge_firmware.py   Single flashable image for the web installer
 scripts/read_serial.py      One-shot serial capture, for scripted checks
-scripts/lan_relay.py        Expose a loopback-only broker port on the LAN
-src/main.cpp                Boot sequence, display, countdown
+src/main.cpp                Boot sequence, display, countdown, messaging
+src/settings.h              Runtime settings in NVS, provisioned over serial
 src/messaging.cpp           MQTT session, commands in, state and events out
 src/sequencer.h             Note-string parser for team audio
-src/jingles.h               Built-in jingles
+src/espnow_link.cpp         ESP-NOW receiver for the lock and fire signals
+src/bridge/                 The ESP-NOW bridge sketch (env: bridge)
 server/                     Go MCP server, dashboard, fake fleet, deploy
+web/                        Browser installer page and manifest
 .env.template               Committed structure documentation
+.env.public                 Credential-free config for the published build
 ```
 
 Plus a few extras you can find for yourself.
 
 ## A note on secrets
 
-WiFi credentials are compiled into the firmware. This is **not** a security
-boundary — they sit in plaintext in the image and can be read back off the
-flash. Fine for a countdown ornament; use a guest or IoT SSID rather than your
-primary network credential, and do not reuse this pattern for anything
-sensitive.
+Wi-Fi credentials provisioned over Improv live in NVS on the device, so they are
+not part of the firmware image and the published build carries none. They are
+still not protected: NVS is unencrypted here and can be read back off the flash
+by anyone holding the device.
+
+If you instead put `WIFI_SSID` and `WIFI_PASSWORD` in `.env`, they are compiled
+into the image in plaintext. That is fine for a private build, but such an image
+must never be published. `.env` is git-ignored for this reason, the public build
+uses `.env.public`, and CI refuses to publish if credentials appear in the build
+configuration.
+
+Either way, prefer a guest or IoT SSID over your primary network credential, and
+do not reuse this pattern for anything sensitive.

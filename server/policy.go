@@ -9,13 +9,13 @@ import (
 
 // Limits from docs/plan.md decision 10. Audio is deliberately uncapped.
 const (
-	shoutCooldown = 120 * time.Second
-	dmCooldown    = 5 * time.Second
-	maxTextLen    = 120
-	maxTTL        = 60
-	lockLead      = 60 * time.Second
-	fanfareLen    = 12 * time.Second
-	inboxSize     = 50
+	defaultShoutCooldown = 120 * time.Second
+	dmCooldown           = 5 * time.Second
+	maxTextLen           = 120
+	maxTTL               = 60
+	lockLead             = 60 * time.Second
+	fanfareLen           = 12 * time.Second
+	inboxSize            = 50
 )
 
 // Message is one entry in a team's inbox.
@@ -29,23 +29,38 @@ type Message struct {
 // Policy holds every social rule: cooldowns, mute, lock, and inboxes. Keyed by
 // device id, since the claim code is the identity and a device is a team.
 type Policy struct {
-	mu         sync.Mutex
-	eventEpoch time.Time
-	manualLock bool
-	lastShout  map[string]time.Time
-	lastDM     map[string]time.Time
-	muted      map[string]bool
-	inbox      map[string][]Message
+	mu            sync.Mutex
+	eventEpoch    time.Time
+	manualLock    bool
+	shoutCooldown time.Duration
+	lastShout     map[string]time.Time
+	lastDM        map[string]time.Time
+	muted         map[string]bool
+	inbox         map[string][]Message
 }
 
 func NewPolicy(eventEpoch time.Time) *Policy {
 	return &Policy{
-		eventEpoch: eventEpoch,
-		lastShout:  map[string]time.Time{},
-		lastDM:     map[string]time.Time{},
-		muted:      map[string]bool{},
-		inbox:      map[string][]Message{},
+		eventEpoch:    eventEpoch,
+		shoutCooldown: defaultShoutCooldown,
+		lastShout:     map[string]time.Time{},
+		lastDM:        map[string]time.Time{},
+		muted:         map[string]bool{},
+		inbox:         map[string][]Message{},
 	}
+}
+
+// SetShoutCooldown changes the per-team shout gap live. Zero disables it.
+func (p *Policy) SetShoutCooldown(d time.Duration) {
+	p.mu.Lock()
+	p.shoutCooldown = d
+	p.mu.Unlock()
+}
+
+func (p *Policy) ShoutCooldown() time.Duration {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.shoutCooldown
 }
 
 // Locked reports whether team commands are refused right now.
@@ -114,7 +129,10 @@ func (p *Policy) Gate(deviceID string) error {
 func (p *Policy) CheckShout(deviceID string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if wait := shoutCooldown - time.Since(p.lastShout[deviceID]); wait > 0 && !p.lastShout[deviceID].IsZero() {
+	if p.shoutCooldown <= 0 {
+		return nil
+	}
+	if wait := p.shoutCooldown - time.Since(p.lastShout[deviceID]); wait > 0 && !p.lastShout[deviceID].IsZero() {
 		return fmt.Errorf("shout cooldown: try again in %d seconds", int(wait.Seconds())+1)
 	}
 	p.lastShout[deviceID] = time.Now()
