@@ -272,7 +272,7 @@ func (a *App) mcpServer() *mcp.Server {
 			return text("LED on %s set to %s %s for %d s.", teamLabel(d), color, mode, ttl), nil, nil
 		})
 
-	mcp.AddTool(s, &mcp.Tool{Name: "shout", Description: "Shout to every stick in the room, with your team's name. Cooldown applies."},
+	mcp.AddTool(s, &mcp.Tool{Name: "shout", Description: "Shout to every stick in the room, with your team's name, an alarm at volume 200/255 and 15 seconds of flashing amber LEDs. Cooldown applies."},
 		func(ctx context.Context, req *mcp.CallToolRequest, in shoutIn) (*mcp.CallToolResult, any, error) {
 			d, err := a.teamDevice(req)
 			if err != nil {
@@ -291,6 +291,12 @@ func (a *App) mcpServer() *mcp.Server {
 			from := teamLabel(d)
 			if err := a.fleet.BroadcastDisplay(Display{Text: msg, From: from, Kind: "shout", TTL: 15, Priority: 1}); err != nil {
 				return nil, nil, err
+			}
+			if err := a.fleet.BroadcastAudio(Audio{Jingle: "alarm", Volume: 200}); err != nil {
+				return nil, nil, fmt.Errorf("shout text sent, but notification sound failed: %w", err)
+			}
+			if err := a.fleet.BroadcastLed(Led{Color: "#FFAA00", Mode: "blink", PeriodMs: 600, TTL: 15}); err != nil {
+				return nil, nil, fmt.Errorf("shout text and sound sent, but LED flash failed: %w", err)
 			}
 			for _, other := range a.fleet.Snapshot() {
 				if other.ID != d.ID {

@@ -125,7 +125,7 @@ Team scope (any call carrying a valid claim code):
 | `show(text, seconds)` | Display on own device |
 | `play(jingle \| notes)` | Audio on own device |
 | `led(color, mode, seconds)` | Pixel on own device |
-| `shout(text)` | Every device shows it with the team's name. Cooldown applies |
+| `shout(text)` | Every device shows it with the team's name, plays the repeated `alarm` jingle at volume 200/255, and flashes enabled LEDs amber for 15 seconds. Cooldown applies |
 | `message_team(team, text)` | DM another team's device and inbox |
 | `list_teams()` | Names and online state, no tokens |
 | `inbox()` | Messages received by this team |
@@ -139,6 +139,11 @@ Organiser scope (calls carrying the organiser secret) adds `broadcast`,
 
 - Shout cooldown per team 120 s. Direct messages 5 s. Text at most 120
   characters. Display and LED TTLs at most 60 s.
+- An accepted shout sends its 15-second display followed immediately by an
+  `alarm` audio command at volume 200/255 and an amber (`#FFAA00`) LED blink
+  with a 600 ms period and 15-second TTL. LEDs return to their schedule afterwards. Rejected shouts
+  send no commands. If audio or LED publishing fails after earlier commands
+  are sent, the tool reports that partial failure.
 - Audio is uncapped: any length, any rate. The organiser's `mute` is the brake.
   Richer audio (samples, voice) is tracked in issue #2.
 - **Room lock.** From 60 s before the event until the fanfare ends, every

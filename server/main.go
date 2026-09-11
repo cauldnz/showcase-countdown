@@ -78,9 +78,7 @@ func main() {
 
 	// Start HTTP before the broker connection: fleet.Connect retries until it
 	// succeeds, and the dashboard must be reachable even while it does.
-	server := app.mcpServer()
-	mcpHandler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server },
-		&mcp.StreamableHTTPOptions{SessionTimeout: 30 * time.Minute})
+	mcpHandler := app.mcpHandler()
 
 	mux := http.NewServeMux()
 	mux.Handle("/mcp", mcpHandler)
@@ -128,6 +126,13 @@ func main() {
 	shutdown, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(shutdown)
+}
+
+func (a *App) mcpHandler() http.Handler {
+	server := a.mcpServer()
+	// Identity is per request; stateless transport also accepts client protocol metadata.
+	return mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server },
+		&mcp.StreamableHTTPOptions{Stateless: true})
 }
 
 func envInt(key string, def int) int {
